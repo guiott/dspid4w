@@ -1,0 +1,1632 @@
+This is a porting on a single dsPIC33FJ64MC802 of previous
+double PID Motor Control (dsPID) formerly performed
+with two dsPIC30F4012 plus odometry and field mapping formerly
+performed with a single dsPIC30F3013 (dsODO program).
+
+Some descriptions my STILL refer to the old project
+
+This further version is for a 4W drive Robot (http://www.guiott.com/Lino/)
+where the four wheels are driven with two dsNav boards
+a master one, that receives commands a data from an IMU, and a slave
+that only maintains the rear wheels at the same speed of the front one
+
+copyright 2012 Guido Ottaviani
+guido@guiott.com
+
+	dsPid4W is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    dsPid4W is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with dsPid4W.  If not, see <http://www.gnu.org/licenses/>.
+
+-------------------------------------------------------------------------------
+  
+dsNavCon33 board is designed with one dsPIC33FJ64MC802 to both control the 
+motors and perform navigation.
+The MC can be replaced with any other MC type dsPIC33 with minor changes on SW.
+It estimates the position through odometry, maps the field and exchanges that 
+values with the main controller board via other communication buses. 
+Telemetry with the remote computer is achieved with a Zigbee RF modem through
+the secondary UART interface.
+
+Fosc			Fcy	(*43/4)		Tcy
+7,3728MHz	39,6288 MHz		25,234173 ns
+10MHz     40 MHz        25 ns
+
+The program is full interrupt driven.
+When initialization starts, the program enters in a very simple Main loop, 
+acting as a state machine. Here it checks some flags enabled by external events
+and enters in the relative state. 
+Since it's a kind of a very simple cooperative "Real Time Operative System",
+every routine has to be executed in the shortest possible time, freeing the
+system up to take care of the very frequent interrupts.
+
+dsPIC33FJ64MC802
+- 01 - MCLR
+- 02 - AN0 current sensing 1 (Vref+ = Avdd = 3.3V)				[2]
+- 03 - AN1 current sensing 2 (Vref+ = Avdd = 3.3V)				[2]
+- 04 - PGD1/EMUD1
+- 05 - PGC1/EMUC1
+- 06 - TX2
+- 07 - RX2     
+- 08 - Vss
+- 09 - OSC1
+- 10 - OSC2
+- 11 - LED2	    	RB4
+- 12 - LED1       RA4
+- 13 - Vdd
+- 14 - QEB2				[4]
+- 15 - QEA2/IC2 (both peripherals mapped on the same pin)	[4]	[7]
+- 16 -     Available
+- 17 - I2C SCL
+- 18 - I2C SDA
+- 19 - Vss
+- 20 - Vcap
+- 21 - QEA1/IC1 (both peripherals mapped on the same pin)	 [4] [7]
+- 22 - QEB1				[4]
+- 23 - PWM1H1													[11]
+- 24 - Motor Enable 1									[11]
+- 25 - PWM1H2													[11]
+- 26 - Motor Enable 2									[11]
+- 27 - Avss
+- 28 - Avdd
+
+
+*******************************************************************************
+
+dsPIC33FJ64MC804
+- 01 - SDA1
+- 02 - QEB1													RP22 [4]
+- 03 - QEA1/IC1 (both peripherals mapped on the same pin)	RP23 [4] [7]
+- 04 - QEB2													RP24 [4]
+- 05 - QEA2/IC2 (both peripherals mapped on the same pin)	RP25 [4] [7]
+- 06 - Vss
+- 07 - Vcap
+08 - PWM1H3/RP10/RB10
+09 - PWM1L3/RP11/RB11
+- 10 - PWM1H2 (IN2_B)										  	[11]
+- 11 - PWM1L2 (IN1_B)											[11]
+- 12 - RA10 H-bridge2 enable									[11]
+- 13 - RA7 H-bridge1 enable										[11]
+- 14 - PWM1H1 (IN2_A)											[11]
+- 15 - PWM1L1 (IN1_A)											[11] 
+- 16 - Avss																
+- 17 - Avdd
+- 18 - MCLR
+- 19 - AN0 current sensing 1 (Vref+ = Avdd = 3.3V)				[2]
+- 20 - AN1 current sensing 2 (Vref+ = Avdd = 3.3V)				[2]
+- 21 - PGD1/EMUD1
+- 22 - PGC1/EMUC1
+23 - AN4
+24 - AN5
+25 - AN6
+26 - AN7
+27 - AN8
+- 28 - Vdd
+- 29 - Vss
+- 30 - OSC1
+- 31 - OSC2
+- 32 - RA8 LED1 (470 Ohm = 3mA)
+33 - RP4/RB4
+34 - RA4
+35 - RA9
+36 - RP19/RC3
+- 37 - RX2													RP20[6]
+- 38 - TX2	    											RP21[6]
+- 39 - Vss
+- 40 - Vdd
+- 41 - RX1													RP5	[6]
+- 42 - TX1													RP6	[6]
+43 - INT0/RP7/RB7
+- 44 - SCL1
+
+*******************************************************************************
+
+[1]
+Watchdog is disabled during development and debug.
+
+[1a]
+SW starts setting to OFF-state H-bridge's enable pin and turning ON the control
+LED.
+If everything is OK, during the normal work cycle, the LED blinks at a 20%
+duty cycle.
+
+*******************************************************************************
+
+A list of peripherals used:
+
+============================
+[2]
+AN1 Motor current reading through Rsense on H bridge
+_ADCInterrupt
+
+Channels CH0 & CH1 are used, connected to AN1 & AN0
+Reference to Avdd, Avss
+System conversion clock
+Conversion trigger auto
+Auto sampling
+ADC is in continuos auto-reading: 
+Auto-Convert Conversion Trigger + Auto-Sample Start
+number of samples between DMA interrupts = 64 per channel
+
+with 10MHz oscillator
+Clock derived from system clock, TcY	 = 25 ns
+ADCS									 = 63
+Tad										 = TCY(ADCS + 1) 	 =  1.6 us 
+
+with 7.3728MHz oscillator
+Clock derived from system clock, TcY	 = 25.234173 ns
+ADCS									 = 63
+Tad										 = TCY(ADCS + 1) 	 =  1.615 us 
+
+
+Auto Sample Time						 = Tad * 31 	     = 	50 us
+Conversion Time (12 Tad) 				 = Tad * 12			 =  19 us
+Total Conv. Time Simultaneous Samp. (CH0-CH1) + 2xTconv		 =  89 us
+Time between interrupts					 = TotConvTime * 64	 =  5.68 ms
+
+Every about 10ms, the 32 measurements stored in DMA buffer are averaged
+
+[2a]
+The cumulation is done in a temporary variable.
+Division by 64, equivalent to a 6 bit shift, is executed in a single HW
+operation in the barrel shifter. So, the ADCValue variable always contains the
+correct value of the latest reading and it can be read in any moment, even by
+the interrupt routines.
+
+[2b]
+If an overload current lasts for more then a specified time, fault procedure
+starts.
+The ADC procedure is called every 10ms, 100 x 10ms = 1s
+============================
+[3]
+N/A
+
+============================
+[4]
+QEA1	Quadrature encoder 1 phase A 
+QEB1	Quadrature encoder 1 phase B
+
+QEA2	Quadrature encoder 2 phase A 
+QEB2	Quadrature encoder 2 phase B
+
+_QEIInterrupt
+
+
+_______________________________________________________________________________
+THIS PARAMETERS ARE VALID FOR RINO ROBOTIC PLATFORM.
+HERE JUST AS AN EXAMPLE ON HOW TO CALCULATE THEM
+
+Motor speed = 6.000 rpm
+Encoder = 300 cpr 
+Gear reduction ratio = 30:1
+Wheel speed = 200 rpm
+Encoder pulses for each wheel turn = 9,000
+Wheel diameter = 58mm -> circumference = 182.2123739mm
+Space for each encoder pulse 1x mode Delta S = 0.020245819mm
+Space for each encoder pulse 2x mode Delta S = 0.01012291mm
+Space for each encoder pulse 4x mode Delta S = 0.005061455mm
+Maximum sped = circumference * rpm / 60 = 182.212mm * 200 / 60 = 60cm/s
+Maximum encoder frequency = (200 * 9,000) / 60 = 30KHz
+Mininum encoder pulse duration = 0.0000333333333333s (33us = 16.6 * 2)
+Maximum QEI frequency 4x = 30 KHz * 4 = 120KHz
+Maximum quantity of pulses in 1ms in 4x mode = 120 -> 1 pulse every 8.33us
+Minimum speed = 182,212 * 20 / 60 = 6cm/s
+Minmum encoder frequency = (20 * 9,000) / 60 = 3KHz
+Maximum encoder pulse duration = 0.000333333333333s (330us = 166 * 2)
+Minimum QEI frequency 4x mode = 3 KHz * 4 = 12KHz
+
+Digital filter on encoder signals
+FILTER_DIV=(MIPS x FILTERED_PULSE)/3=(39,628,800 x 1.66667E-05)/3=220.16
+dividing by 128 a 10us filter is achieved
+shortest pulse expected (@ 30 KHz) is 16us.
+_______________________________________________________________________________
+_______________________________________________________________________________
+THIS PARAMETERS ARE VALID FOR LINO ROBOTIC PLATFORM.
+HERE JUST AS AN EXAMPLE ON HOW TO CALCULATE THEM
+
+Motor speed = 4.000 rpm
+Encoder = 512 cpr
+Gear reduction ratio = 25:1
+Wheel speed = 220 rpm
+Encoder pulses for each wheel turn = 12,800
+Wheel diameter = 120mm -> circumference = 377mm
+Space for each encoder pulse 1x mode Delta S = 0.029452431mm
+Space for each encoder pulse 2x mode Delta S = 0.014726216mm
+Space for each encoder pulse 4x mode Delta S = 0.007363108mm
+Maximum sped = circumference * rpm / 60 = 377mm * 220 / 60 = 138cm/s
+Maximum encoder frequency = (200 * 12,800) / 60 = 47KHz
+Mininum encoder pulse duration = 21.3us
+Maximum QEI frequency 4x = 30 KHz * 4 = 188KHz
+Maximum quantity of pulses in 1ms in 4x mode = 188 -> 1 pulse every 5.32us
+Minimum speed = 377mm * 3.2 / 60 = 2cm/s
+Minmum encoder frequency = (3.2 * 12,800) / 60 = 680Hz
+Maximum encoder pulse duration = 1.47ms
+Minimum QEI frequency 4x mode = 680Hz * 4 = 2.73KHz
+
+Digital filter on encoder signals
+  FILTER_DIV=(MIPS x FILTERED_PULSE)/3=(40,000,000 x 1.06383E-05)/3=425.5
+  dividing by 64 a 5us filter is achieved
+
+shortest pulse expected (@ 47 KHz) is 10.65us.
+_______________________________________________________________________________
+
+
+
+
+Both Motor Controllers routines are the same.
+The motors are assembled in an opposite position each other, so the encoders'
+phases (QEA and QEB) on QEI1 and QEI2 must be connected in a opposite way to 
+ensure the correct rotation. 
+
+============================
+[5]
+OSC1				
+OSC0 
+N/A
+
+============================
+[6]
+UART1 configuration
+
+[6a]
+N/A
+ 
+[6b]
+U1ARX	RX serial communication with the supervisor	
+_U1RXInterrupt
+
+The command string is composed by an array of unsigned char:
+0 - Header	 @
+1 - Id		 0-9 	ASCII	(not used here, just for compatibility)
+2 - Cmd		 A-Z 	ASCII
+3 - CmdLen	 N = 1-MAX_RX_BUFF	# of bytes following (checksum included)
+		 ...	data 1
+		 ...
+		 ...	data N-1
+N - Checksum 0-255	obtained by simply adding up in a 8 bit variable, all bytes
+composing the message (checksum itself excluded)
+
+The following bytes are decoded anyway: 
+0) Header
+1) Id
+2) Cmd
+3) CmdLen
+to understand how many bytes are coming, also if command parsing does not start
+it is needed to sincronize handshaking with the next message.
+
+Errors
+-30 Current overload error
+-20 Constants parameters error
+-11 RX circular queue overflow
+
+-9 Command parsing not complete
+-8 Buffer overflow
+-7 not a known command
+-6 Unknown state
+-5 Out of command sequence
+-4 Overrun error
+-3 Frame error  
+-2 Timeout error
+-1 Checksum error
+
+Add 100 (dec) for error codes on UART2
+
+RX states
+0 Idle
+1 Header received
+2 Id received and acknowledged
+3 Id received but NOT acknowledged (receives command string but not parses)
+4 Command received
+5 Command length received
+6 Waiting for command string end
+99 Command string OK, start parsing
+
+[6c]
+In case of error (see above) routine UartRxError changes LED1 blinking 
+frequency
+
+[6d]
+The bytes are exchanged between second and third layers (ISR and UartRx
+function) through a circular buffer. ISR receives a byte, stores it in an array
+and increments a pointer to the array, if the pointer reaches the end of the
+array it is restarted to the beginning. The UartRx function has its own pointer
+to read the same array, incremented (in a circular way too)  as soon as the
+byte is decoded in the current RX status. Main loop calls the UartRx function
+whenever the "in" pointer differs from "out" pointer.
+
+Function
+  _U1RXInterrupt()  _U2RXInterrupt()
+Where
+  ISR
+Activated By
+  _U1RXIF / _U2RXIF
+  At least one byte received by the UART peripheral
+
+Function
+  UartRx(() / Uart2Rx()
+Where
+  Main Loop
+Activated by
+  UartRxPtrIn != UartRxPtrOut
+  At least an unread byte is in the circular queue:
+  read pointer != write pointer
+Dependencies
+  ISR _U1RXInterrupt() / _U2RXInterrupt()
+
+Function
+  Parser()
+Where
+  Main Loop
+Activated by
+  (UartRxStatus == 99) || (Uart2RxStatus == 99)
+  A command has been acknowledged from serial interface 1 or 2
+Dependencies
+  UartRx(() / Uart2Rx()
+
+[6d]
+TX DMA
+
+[6z]
+All of the above is valid also for the UART2 communication
+============================
+[7]
+IC2	Velocity measurement
+_IC2Interrupt
+
+The input capture is used to measure the time between two encoder's pulses, 
+internally connected in parallel to QEA.
+see a detailed explaination at http://www.guiott.com/Lino/Speed/SpeedMeasure.htm
+____________________________________________________________________________
+THIS PARAMETERS ARE VALID FOR RINO ROBOTIC PLATFORM.
+HERE JUST AS AN EXAMPLE ON HOW TO CALCULATE THEM
+
+It captures elapsed time on rising edge of the encoder's signal.
+Timer prescaler = 1 -> period = 25.2341731266 ns
+maximum speed (200 rpm) -> 1300 TMR2 pulses per encoder tick:
+30 samples per ms
+minimum speed (20  rpm) ->13000 TMR2 pulses per encoder tick:
+3 measurements per ms
+____________________________________________________________________________
+____________________________________________________________________________
+THIS PARAMETERS ARE VALID FOR LINO ROBOTIC PLATFORM.
+HERE JUST AS AN EXAMPLE ON HOW TO CALCULATE THEM
+
+Timer prescaler = 1 @ F-> period = 25 ns
+It captures elapsed time in different modes, depending on motor speed:
+on rising and falling edges of the encoder's signal:
+  2X mode. ICM = 0b001.
+on rising edges of the encoder's signal.
+  1X mode. ICM = 0b011.
+every 4th rising edges of the encoder's signal.
+  1/4X mode. ICM = 0b100.
+maximum speed (230 rpm) -> 3246 TMR2 pulses per encoder tick (4X):
+12 samples per ms
+minimum speed (2  rpm) ->31250 TMR2 pulses per encoder tick (2X):
+1 measurements per ms
+____________________________________________________________________________
+
+
+TIMER2 is used in free-running mode. At each IC2 interrupt, TMR2's present
+value is stored and its previous value is subtracted from it; this is pulse
+period. Then the present value becomes the previous value, awaiting the next
+sample.
+[7a]
+TMR2's flag has to be checked to know if there is an overflow.
+If yes, the difference between 0xFFFF and previous sample has to be added to
+present value.
+Using an int to count all the overflows that have occurred, the TMR2 timer
+become effectively a 32bit timer
+[7b]
+the samples are algebraically added according to _UPDN bit, to also know the
+speed direction.
+
+[7c]
+the Input Capture prescaler is changed accordingly with the speed to have a
+good compromise between accuracy and interrupt load for the MCU at every speed
+see a detailed explaination at http://www.guiott.com/Lino/Speed/DynamicIC.htm
+
+============================
+[8]
+N/A
+
+============================
+[9]
+N/A
+
+============================
+[10]
+RE3	Led 1, green = program running -> [1a]
+Signaling LEDs
+
+============================
+[11]
+RB15 H-bridge2 enable
+RB13 H-bridge1 enable
+PWM1H2													
+PWM1H1
+
+Both MCs routines are there the same.
+The motors, mechanically installed in opposite way each other, must be
+electrically connected (PWMH, PWML) in an opposite way too, to achieve the
+correct rotational direction.
+
+PTPER = FCY (FPWM • (PTMR Prescaler)) - 1
+Es.:
+Fosc			Fcy
+7,3728MHz		39,628Mips	
+
+PTPER = (39,628,000 / 19,359) - 1 = 2048
+
+Fosc			Fcy
+10MHz		 40Mips
+
+PTPER = (40,000,000 / 19,521) - 1 = 2048
+		
+============================
+[12]
+TIMER 2
+_T2Interrupt
+
+used by Input Capture to measure speed
+It's loaded with value 0xFFFF at startup and it's configured in "free running
+mode", value read in TMR2 is pulse period.
+TMR2 overflow occurs at Tcy * 65.535 = 1.6ms, much greater than sampling
+period of 1ms, since it's in free running mode, it can occur no more than one
+time for each cycle. In this case it must to be considered in period
+measurement -> [7a]
+
+============================
+[13]
+TIMER 1
+_T1Interrupt
+
+used to generate 1000Hz timing clock, needed for PID and
+position elaboration.
+Tcy * 39,628 = 1.000005ms @ 7.3728MHz
+Tcy * 40,000 = 1.000000ms @ 10MHz
+
+clocked by the same timer there are other two timed cycles as multiples of 
+1ms main cycle
+
+*******************************************************************************
+
+[14]
+N/A
+
+*******************************************************************************
+[15]
+Debug Stand Alone mode.
+During development MCU is not connected to the supervisor, therefore the SW is
+a  little different with the final version: 
+a) Watchdog disabled ->[1] 
+b) Checksum disabled
+
+*******************************************************************************
+[16]
+Command Parser from commands coming from both UARTs
+RX interrupt is disabled to avoid current command overwrite.
+RX buffer is 4 byte wide, the command parsing must be done before the fifth
+character is come to avoid OVERRUN error.
+
+r=read, w=write
+Known commands:
+A - r All mean parameters request: Vmean, Ctotal, PosX, PosY, Theta
+a - r All detailed parameters request: Vr, Cr, Vl, Cl, PulseR, PulseL
+D - w Setting reference coord. X, Y computing distance [24] Mode C
+d - w Distance from objects and targets, sensors board -> dsNav
+e - r Read error code and reset error condition
+f -   set "Console Debug" mode [30]
+H - w Immediate Halt without decelerating ramp	
+J - w Settings PID coefficients for DistPid: DistKP, DistKI, DistKD
+K - w Settings PID coefficients for SpeedPID: KP, KI, KD
+k - w Settings PID coefficients for AnglePid: AngleKP, AngleKI, AngleKD
+L - w Speed constant parameters designation: KvelR, KvelL
+M - w Mechanical constants: Axle size, KspR, KspL
+O - w Reference orientation angle in degrees
+o - w Reference orientation angle in degrees as a delta of the current Theta
+P - w Setting reference coordinates X, Y in mm [24] Mode B
+Q - r Raw sensors data, dsNav -> console
+R - r Firmware version request
+S - w Reference speed setting in mm/s
+s - w Scheduler parameters setting
+* -   Board reset [28]
+# -   start scheduler sequence [32a]
+$ - r One row of map grid sending request [22f]
+z – r/w send back a text string, just for debug.
+
+--- Service
+* - w Board reset [28]
+	-Receive:
+		CmdLen = 1	Params 0
+	-Transmit:
+		N/A
+		
+R - r Firmware version request
+	-Receive:
+		CmdLen = 1 Params 0
+	-Transmit:	
+		CmdLen = 24	Params 25 (string "Ver")
+
+z – r/w send back a text string, just for debug.
+	-Receive:
+		it just needs HEADER + character z (i.e. @z)
+	-Transmit:	
+		CmdLen = 25 (string "Test")
+	
+e - r Read error code and reset error condition
+	-Receive:
+		CmdLen = 1	Params 0
+	-Transmit:
+		CmdLen = 3	Params 2	(1 int Most Significant First)
+		
+f -   Set "Console Debug" mode [30]
+	-Receive:
+		CmdLen = 1	Params 0
+	-Transmit:
+		N/A
+
+--- Navigation settings		
+O - w Reference orientation angle in degrees
+	-Receive:
+		CmdLen = 3	Params 2	(1 int Most Significant First)
+	-Transmit:
+		N/A
+		
+o - w Reference orientation angle in degrees as a delta of the current Theta
+	(relative)
+	-Receive:
+		CmdLen = 3	Params 2	(1 int Most Significant First)
+	-Transmit:
+		N/A
+
+S - w Reference speed setting in mm/s
+	-Receive:
+		CmdLen = 3	Params 2	(1 int Most Significant First) range -999 +999
+	-Transmit:
+		N/A
+
+
+H - w Immediate Halt without decelerating ramp	
+	-Receive:
+		CmdLen = 1	Params 0
+	-Transmit:
+		N/A
+
+
+--- Navigation read			
+A - r All mean parameters request: Vmean, Ctotal, PosX, PosY, Theta, IdlePerc
+	-Receive:
+		CmdLen = 1 Params 0
+	-Transmit:
+		CmdLen = 12	Params 11	(5 int Most Significant First + 1 byte)
+
+a - r All detailed parameters request: Vr, Cr, Vl, Cl, PulseR, PulseL
+	-Receive:
+	CmdLen = 1 Params 0
+	-Transmit:	
+	CmdLen = 13	Params 12	(6 int Most Significant First)
+	
+
+*******************************************************************************
+[17]
+CheckSum calculation
+obtained by simply adding up in a 8 bit variable, all bytes composing the
+message (checksum itself excluded).
+
+unsigned char UartChkSum (unsigned char *Buff,unsigned int BuffSize)
+
+Needed parameters are:
+Pointer to buffer containing data to add
+Numbers of characters to add
+
+Returns:
+Checksum value in a char variable (0-255)
+
+*******************************************************************************
+[18]
+Parameters trasmission
+Send to the supervisor the requested parameters, with the correct handshake.
+To do this:
+Fills TX buffer with
+	header
+	data
+	CheckSum
+Sets TX flag
+
+void TxParameters(char TxCmd,int TxCmdLen, int PortNumber)
+
+Needed parameters are:
+	Command to send
+	Number of bytes to send (Data are stored in UartTmpBuff buffer)
+	Port number to use for sending
+Eg.:
+	to send params 1, 2, 3, of "A" type to port 1:
+		UartTmpBuff[0]=1;
+		UartTmpBuff[1]=2;
+		UartTmpBuff[2]=3;
+		TxParameters('A',3,1);
+		
+*******************************************************************************
+[19]
+Encoder pulses counts are added up, algebraically, in "Space" variable 
+every 1ms.
+Odometry is elaborated by the supervisor, so the "Space" variable is sent to 
+the supervisor through serial interface and reset in MC with a period that
+could be greater than 1ms.
+Value sent is pulses count as an integer.
+Conversion to mm is done by the supervisor.
+
+PID and speed elaboration
+-> [4] [7]
+PID and speed elaboration is done every millisecond.
+At each encoder pulse the period counts are added up, when 1ms interrupt 
+occurs it calculates the mean speed by averaging all samples (summation/index).
+In the 1ms period, speed is elaborated from a minimum of 1 time (@ 2 rpm)
+to a maximum of 13 times (@ 230 rpm).
+Maximum quantization error is less 1/30000, but in this case the average in 1ms
+is done on 13 samples. At minimum speed the average is with 1 samples only but
+quantization error is less 1/3000.
+
+[19a]
+Input Capture interrupts may happens very frequently, so measured values can be
+modified during elaboration.
+To avoid that, they are stored in a temporary variable and reset before
+starting PID and speed calculation.
+
+[19b]
+N/A
+
+[19c]
+if index = 0 there was no pulses in a 1ms slot:
+if index != 0 -> averages speed, otherwise speed = 0.
+Minimum measurable speed is 3.5 cm/s with capture on every rising edge (1X mode)
+Minimum measurable speed is 1.8 cm/s with capture on every edge (2X mode)
+
+Constant to calculate speed in meter/second:
+	V = S/T speed is calculated averaging all samples in 1ms 
+	Space = SPACE_ENC_1X * IcIndx
+		= space covered in one encoder pulse * number of pulses in 1ms 
+	Time = TCY * IcPeriod
+		= single TMR period * summation of periods occurred in 1ms
+	Single TMR period = TCY = 1 / FCY	
+	
+	V = (SPACE_ENC_1X * IcIndx) / (TCY * IcPeriod) =
+		= (SPACE_ENC_1X / TCY) * (IcIndx / IcPeriod) =
+		= (SPACE_ENC_1X * FCY) * (IcIndx / IcPeriod) =
+		= Kvel * (IcIndx / IcPeriod)
+	Kvel = SPACE_ENC_1X * (FCY) to obtain speed in m/s
+  FCY = 40MHz
+
+Two different way of elaboration was experimented:
+1- Classic: float variables used -> high accuracy
+
+	const float KvelFloat = (K_VEL); // 809.8327729
+	float VelFloat;	// floating point speed (m/s)
+
+	VelFloat = KvelFloat*IcIndx/IcPeriod; // mean speed in 1ms 
+	PID_MES = Q15(VelFloat);	// measured speed in m/s (fractional)
+
+ elaboration is heavy due to the float variables and to one more conversion
+ from float to fractional needed before calling PID routine.
+ This method requires an overall time of 60us (on a 30Mips dsPIC)
+
+2- with "long" variables (still 32 bit). 
+
+	const long KvelLong = 13268300; // Kvel << 15
+	long VelLong; // speed in a "long"
+
+	VelLong = KvelLong*IcIndx/IcPeriod;
+	PID_MES = (VelLong);	// speed measured in m/s (fractional)
+
+  or, better:
+  IcTmp=KvelLong/IcPeriod;
+  VelLong = IcTmp*IcIndx;
+  to avoid long variable overflow in the intermediate calculi
+
+The constant is calculated just at compiling, multiplying it's value by 2^15.
+The integer elaboration is much faster and the final result is already
+multiplied by 2^15, already in fractional format for PID routine.
+ This method requires an overall time of 20us (on a 30Mips dsPIC).
+
+Comparing both methods, the final result differs just for the least significant
+bit.
+	
+[19d]
+PID 
+Microchip Code Example CE019
+Declare a PID Data Structure of type "tPID" named PIDstruct
+The data structure contains a pointer to derived coefficients in X-space and
+pointer to controller state (history) samples in Y-space. 
+So declare variables for the derived coefficients and the controller history
+samples:
+abcCoefficient[3]
+controlHistory[3]
+The abcCoefficients referenced by the PIDstruct data structure are derived
+from the gain coefficients, Kp, Ki and Kd
+So, declare Kp, Ki and Kd in an array
+kCoeffs[] = {0,0,0}
+
+[19e]
+To convert a fractional variable in a long one it must be divided by 2^15.
+To scale the error range returned from PID routine (-1 +1) in PWM range
+(0 -4096 in LAP mode) it has to be multiplied by 2^11, so:
+(fract >> 15)  << 11   ->  PWM = PID_OUT >> 4 + 2048
+This is true with PWM period = 2048
+@ Fcy=39.628 MHz -> PWM F=19,359Hz, 12bit resolution
+@ Fcy=40.000 MHz -> PWM F=19,521Hz, 12bit resolution
+
+[19f]
+Acceleration and deceleration of the motors are executed with a rising or
+falling ramp in order to avoid heavy mechanical strain and wheel slippering.
+The deceleration is faster then the acceleration to avoid bumps with the
+obstacles during braking.
+When a new speed value is set with "W" command, current and final speeds are to
+be considered. These could be both positive or negative and the final speed
+could be algebraic greater or smaller than the final one.
+All possible combinations are:
+  if		 &&			   --->
+Present Vel		Final Vel 		Ramp step			End of ramp test
+>= 0			> Vel Iniz		+ Acc				if Vel Ist > Vel Fin
+>= 0			< Vel Iniz		- Dec				if Vel Ist < Vel Fin
+>= 0			> Vel Iniz		+ Dec				if Vel Ist > Vel Fin
+>= 0			> Vel Iniz		- Acc				if Vel Ist < Vel Fin
+
+Increase or decrease of speed is done at each PID cycle (1ms) with a very small
+step:
+with ACC = 0.00025 m every 1ms -> to increase from 0 to 0.5 m/s it needs
+	2000ms -> mean Vel = 0.25 m/s -> 50 cm of space covered
+with DEC = 0.0025 m every 1ms -> to  decrease from 0.5 a 0 m/s it needs
+	200ms -> mean Vel = 0.25 m/s -> 5 cm of space covered before stop
+
+*******************************************************************************
+[20]
+DMA
+
+*******************************************************************************
+[21]
+To allow SIM debugging. Otherwise MPLAB stay hanged forever
+
+*******************************************************************************
+[22]
+Odometry & dead reckoning
+The coordinates of the current position of the robot is achieved with an
+algorithm elaborated starting from G.W. Lucas' paper "A Tutorial and Elementary
+Trajectory Model for the Differential Steering System of Robot Wheel Actuators"
+available on Internet:
+http://rossum.sourceforge.net/papers/DiffSteer/DiffSteer.html
+
+[22a]
+In order to avoid computational errors (divide by zero) and waste of the
+controller time, a check has to be done in advance on both Spmm[R] and Spmm[L]
+variables, defining a quasi-zero value SPMIN, that takes care of minimal
+mechanical and computational approximations.
+-If absolute value of SaMinusSb (Spmm[R]-Spmm[L]) is less than SPMIN, the
+platform is traveling in a nearly straight line and we can use without
+approximations the method in [6] from already mentioned Lucas paper 
+-If absolute value of SrPlusSl (Spmm[R]+Spmm[L]) is less than SPMIN, the
+platform is pivoting around its own vertical axis without translation.
+
+[22aa]
+With the computation described above the resulting orientation is obtained
+according to the trigonometry convention: 0 degrees is along the X axis, the 
+angle value increases counterclockwise
+In order to have the orientation in geographic convention (0 degrees is north
+and angle value increases clockwise: 90° is east, 180° south, 270° west) we
+use the left wheel as the external one in the rotation curve instead of right
+wheel: 
+Trigonometric SaMinusSb = Spmm[R]-Spmm[L]
+Geographic    SaMinusSb = Spmm[L]-Spmm[R]
+and the cos is swapped with sin in the formulas.
+
+ALL THE FOLLOWING PROCEDURES WILL BE COMPUTED WITH GEOGRAPHIC CONVENTION ONLY.
+
+[22b]
+Field mapping
+The unknown field is mapped in a grid of CELL_SIZE mm * CELL_SIZE mm cells.
+Maximum field dimension is MAP_SIZE mm * MAP_SIZE mm.
+E.g. MAP_SIZE = 12,000 mm    CELL_SIZE = 50 mm  -> # of cells is:
+12,000/50 * 12,000/50 = 57,600
+In order to store the grid in a matrix, each cell is defined with 
+8 / VAR_PER_BYTE bits. 
+In the example of 4 variables for each byte (2 bits for each cell) 
+we have a total memory occupation of 14,400 Bytes
+
+The Y index is MAP_SIZE modulo CELL_SIZE
+The X index is (MAP_SIZE modulo CELL_SIZE) / VAR_PER_BYTE
+E.g.:
+Y index MAX = 12,000 / 50 = 240 (0-239)
+X index max = 12,000 / 50 / 4 = 60 (0-59)
+each variable is split in 4 2bit variables with a sub-index ranging 
+from 0 to 3
+in this way a 57,600 cells fields can be mapped in a 14,400 byte array
+
+If there is the need to store more levels for each cell, a compromyze
+could be setting a CELL_SIZE of 100mm. Dividing by 2 the number of cells
+per side divides the memory occupation by 4, allowing 2 variables for
+each byte instead of 4 (16 positions instead of 4) and still increasing
+field dimensions:
+MAP_SIZE = 15,000 mm
+CELL_SIZE = 100 mm
+# of cells is: 15,000 / 100 * 15,000 /100 = 22.500
+Y index MAX = 15,000 / 100 = 75 (0-74)
+X index max = 15,000 / 100 / 2 = 150 (0-149)
+each variable is split in 2 4bit variables with a sub-index ranging 
+from 0 to 1
+in this way a 22,500 cells fields can be mapped in a 11,250 byte array
+
+
+Bot can starts from any position in the field, these will be the
+reference coordinates (0,0) in its reference system.
+To translate bot reference system coordinates to 50x50 matrix index, their
+values must be "normalized" in 0-75 range:
+Xindx = (Xrel + 75) mod 75
+Index is the remainder of division, in a range 0-74.
+A range check must be performed before to avoid overflow.
+If HALF_MAP_SIZE is added instead of MAP_SIZE, the 0,0 coordinates are
+located at the center of the field and start available coordinates range
+from -HALF_MAP_SIZE to +HALF_MAP_SIZE.
+
+To divide with remainder, a dsPIC built-in function can be used such as:
+
+__builtin_divmodud
+Description: 
+Issues the 16-bit architecture's native unsigned divide support with the
+same restrictions given in the dsPIC30F/33F Programmers Reference
+Manual (DS70157). Notably, if the quotient does not fit into a
+16-bit result, the results (including remainder) are unexpected. This
+form of the builtin function will capture both the quotient and remainder.
+Prototype: 
+	unsigned int __builtin_divmodud(
+	unsigned long dividend, unsigned int divisor,
+	unsigned int *remainder);
+Argument: 
+	dividend number to be divided
+	divisor number to divide by
+	remainder pointer to remainder
+Return Value:
+	Quotient and remainder.
+Assembler Operator / Machine Instruction:
+	divmodud
+	
+[22c]
+Field mapping procedure (Slam) is called to store in the cell related to the 
+current position, some information about the environment.
+
+In case of 2 bits per cell, four different values can be assigned:
+n = 00  unknown cell
+n = 01  cell visited 1 time
+n = 02  cell visited more than 1 time
+n = 03  obstacle found
+
+In case of 4 bits per cell, 16 different values can be assigned:
+n = 00  unknown cell
+n = 01 to 07 obstacle found n times
+n = 08 to 10 cell visited n-7 times
+n = 11  Gas target found
+n = 12  Light target found
+n = 13  Sound target found
+n = 14 to 15 available for further expansions
+
+if the procedure is called with Cell flag = 0, it means that the bot is on
+the cell(X, Y) right now. 
+If Cell flag = 1, it means that the cell(X,Y) contains and obstacle
+
+[22d]
+The "Cell" parameter is used to drive the behavior of the procedure, the
+value of the cell addressed is modified in this way:
+0 = do nothing, just return the value of the cell addressed
+1 = Obstacle found, increment value from 1 to 7
+2 = I Was Here, increment value of the cell from 08 to 10 meaning that the
+	robot travelled on that cell 1 or more times. This overrides obstacle info
+5 = Gas target found. This and following override any other info
+6 = Light target found
+7 = Sound target found
+
+[22e]
+The field is dinamicaly shifted when boundaries are reached. If the robot goes
+beyond 7500mm, the new range is -7400 to 7600, -7300 to 7700 and so on, with a 
+global history of a 15,000 x 15,000 mm field around the robot
+
+[22f]
+The console asks for the content of the grid map. It asks a matrix row at a
+time. In the requesting command there is the index of the row to send.
+The responding packet is composed by:
+1° byte = index of the matrix as requested in the range 0 - Y_SIZE
+2° byte = byte H for Xshift (see [22g])
+3° byte = byte L for Xshift
+4° byte = byte H for Yshift
+5° byte = byte L for Yshift
+byte 6 to 81 one row of the map grid at index requested
+
+[22g]
+Because the map is stored in a matrix using modulo, when the robot is traveling
+beyond the MAX limit or behind the MIN limit (in both X or Y axis), this fact
+has to be stored in some way to be able to read the exact X, Y coordinates when
+reading the matrix back.
+Xshift, and the corresponding Yshift, means how much the matrix index has 
+wrapped. E.g.: if Xshift = 4, means that reading cells from 4 to MAX we have
+the real coordinates, from 0 to 4 we have values relative to coordinates beyond
+old MAX limit and we have lost the old MIN limits. If Xshift = -4, means that
+from 0 to MAX - 4 we have real coordinates, from MAX - 4 to MAX we have 
+coordinates behind old MIN limit.
+
+Starting position
+Xshift = 0
+Xmax =  7499  -> index = 150
+X    =  0     -> index = 75
+Xmin = -7500  -> index = 0
+
+when robot travels beyond 7500 (e.g.7800)
+Xshift = 4
+Xmax =  7800 -> index = 3
+X    =  7700 -> index = 2
+X    =  7600 -> index = 1
+X    =  7500 -> index = 0
+X    =  7499 -> index = 150
+X    =  0    -> index = 75
+Xmin = -7200 -> index = 4
+X    = -7500 to -7300 -> no more available
+
+when robot travels behind -7500 (e.g.-7800)
+Xshift = -4
+X    =  7200 to 7500 -> no more available
+Xmax =  7199 -> index = 150 - 4
+X    =  0    -> index = 75
+X    = -7500 -> index = 0
+X    = -7600 -> index = 150 - 1
+X    = -7700 -> index = 150 - 2
+Xmin = -7800 -> index = 150 - 3
+
+
+*******************************************************************************
+[23]
+Angle PID
+PID procedure to maintain the desired orientation.
+The orientation angle obtained by dead reckoning procedure [21] is used as
+measured output feedback for this PID. PID output is used to control the
+rotation angular velocity of the bot around its vertical axis. This allows to
+keep the heading corresponding to "ThetaDes" value.
+
+[23a]
+With this optimization, the rotation to point to the desired orientation, will
+never be greater than PI rad (180 degrees) positive (CW) or negative (CCW).
+
+[23b]
+In order to work with fractional variables, needed by PID function, the value
+of the angle is normalized to a half circle angle (PI radians), so 0.25 means
+a PI/4 angle (45 deg), 0.5 means a PI/2 angle (90 deg) and so on.
+
+[23c]
+The optimization in [23a] already returns the error value between measured and
+reference values. This value can be used as "mes" input of PID if "ref" is set
+to 0.
+[23ca]
+Since the reference value is continuously set to zero, the history (the integral
+part of the PID) must be reset before setting a new value, otherwise the error 
+is cumulated at every new setup. To do this the PIDInit() procedure can be used
+
+[23d]
+This is the limit for Angle PID correction, the maximum amount of speed to add
+or subtract to the mean speed value (VelDesM) to obtain the speed of each wheel
+(VelDes[R], VelDes[L]) in order to have the desired rotation of the bot.
+To convert fract to int it requires a division by 2^15. To keep the limit at
+256 it requires a multiplication by 2^8, so >>15 + <<8 = >>7
+
+[23e]
+As aforementioned, the rotation angular velocity is obtained adding DeltaV to
+the speed of left wheel and subtracting it to the speed of right wheel, with
+geographic (CW = positive) convention.
+If the speed of one wheel exceeds positive or negative maximum controllable
+speed, that speed will be set to MAX_ROT_SPEED and the speed of the other wheel
+will be set to (MAX_ROT_SPEED + or - (2*DeltaV)) resulting in a lower VelDesM.
+
+[23f]
+VelFin[x] are the values (converted fractional) to use as references for speed 
+PIDs. 
+This part of the code decides the slope of the ramp to acc/decelerate -> [19f]
+
+*******************************************************************************
+[24]
+
+******* NOT USED ON THIS VERSION *******
+
+Navigation
+Procedure to control speed and orientation in order to navigate safely avoiding
+obstacles and reaching the desired position when needed.
+
+The supervisor receives navigation command from outside by serial interface
+(telemetry) or by serial2 interface (navigation board). 
+Different navigation strategies can be used:
+
+A - travel at a given speed in a given direction (VelDes, deltaDes).
+B - travel toward a given point with coordinates XDes, YDes.
+C - travel for a given distance in a given direction (DistDes, deltaDes).
+
+Mode A: Distance procedure is disabled (DIST_ENABLE_FLAG = 0), only the PID
+control "Angle PID" is used on the supervisor.
+Command "W" (set VelDesM)
+Command "O" (set ThetaDes absolute) or command "o" (set ThetaDes relative)
+
+
+Mode B: Distance procedure enabled (DIST_ENABLE_FLAG = 1), the desired speed 
+VelDes is calculated by this procedure as a negative delta of VelDesM and it 
+is used as in mode A.
+Speed vector (magnitude and direction) is computed as a function of the 
+current coordinates and the destination coordinates, dinamicaly corrected
+in order to avoid obstacle. 
+Angle is used as reference input for "Angle PID". With angle and VelDes 
+available, the speed control of the wheels runs as in mode A.
+Command "W" (set VelDesM)
+Command "x" (set PosXdes, PosYdes)
+
+Mode C: Distance procedure enabled (DIST_ENABLE_FLAG = 1), the destination
+coordinates Xdes, Ydes are computed once at the beginning as a function of input
+parameters DistDes, ThetaDes. After that, everything goes as in mode B.
+Command "W" (set VelDesM)
+Command "O" (set ThetaDes absolute) or command "o" (set ThetaDes relative)
+Command "D" (set PosXdes, PosYdes as a function of Dist and ThetaDes)
+
+[24a]
+If a new orientation is set, the previous computed coordinates are no more 
+valid in B or C mode. The A mode is automatically selected.
+
+[24b]
+The "Speed PID" control is executed every 1ms.
+The "Angle PID" is executed every CYCLE1_TMO ms.
+The Distance procedure is executed every CYCLE2_TMO times.
+With current values it means:
+"Speed PID" every 1ms
+"Angle PID" every 10ms
+Distance  every 50ms
+
+[24c]
+The magnitude (not the phase) of speed vector control through Distance 
+procedures starts only when the bot is close to the destination point.
+The speed reduction is inversely proportional to the distance from the
+goal. Because it is computed only if Dist < MIN_GOAL_DIST, VelDecr will
+ever be < 1.
+The total speed reduction is the combination of both Obj and Goal effects.
+
+[24d]
+The VelDesM speed is decreased multiplying it by the VelDecr value.
+VelDecr range is 0 to 1 in order to have full speed when distance is
+greater than MIN_GOAL_DIST or no obstacles found, and speed = 0 when
+target is reached.
+If the Distance procedure is not enabled, VelDecr is reset to 1 (full speed).
+
+[24e]
+The Virtual Force Field (VFF) method was developed by Johann Borenstein and 
+Yoram Koren at the the university of Michigan in 1989.
+For further reference about the VFF method visit:
+http://www-personal.engin.umich.edu/~johannb/vff&vfh.htm 
+
+To reach the goal in the unknown environment all of the objects must be 
+considered. Assuming a vectorial force that attracts the robot towards the 
+final destination and a series of force that reject it caused by all obstacles,
+we can vectorially add all of them in order to compute the orientation of the
+robot. It allows to dinamicaly find the path towards the target at any given 
+position avoiding obstacles.
+
+Translating the Borenstein algorythm in code it should be something like this:
+CellV=GetMap(X_grid, Y_grid);
+if((CellV > 0) && (CellV < 8))
+{
+  DistObst=sqrt(pow((X_grid-Cx),2)+pow((Y_grid-Cy),2));
+  if(DistObst != 0)
+  {
+    Frx+=Fcr*CellV/pow(DistObst,2)*(X_grid-Cx)/DistObst;
+    Fry+=Fcr*CellV/pow(DistObst,2)*(Y_grid-Cy)/DistObst;
+  }
+}
+
+Exploring a 16 x 16 cells could result in a 1024 iterations of that calculi
+that can require 300ms of machine time.
+Because the explored field around the robot is always a fixed number of
+discrete cells, it is easy to precalculate once the X and Y component for
+the repulsive vectors of each possible obstacle placed in the cells. 
+This saves a lot of calculi leading to a theorethical maximum time of 20ms
+if every cell is occupied by an obstacle. This can be afforded even with a
+50ms cycle time.
+Once computed the table it is evident that the contribute of an obstacle far
+more than 1.5m from the robot is very low, so the field to be scanned can be
+reduced saving even more time. 
+
+[24f] 
+
+
+[24g] 
+Sensors on the sides are 45° oriented, the object is considered at the distance
+measured by the sensor board and at this angle, relatively to current 
+orientation, even if the measurement cone of the sensors cause an uncertainty.
+
+*******************************************************************************
+[Summarizing]
+- VelDesM is the desired speed for the center of the robot, set via COMM port
+- VelDecr is calculated by the Distance() function in order to approach the 
+  target exactly with speed = 0
+- RealVel = VelDesM - VelDecr
+- DeltaVel is the angular rotation speed of the robot calculated by the 
+  Orientation() function (Angle PID) in order to maintain the right orientation
+- VelDes[R] = RealVel - DeltaVel
+- VelDes[L] = RealVel + DeltaVel
+  if one of the VelDes reach the maximum allowable speed the VelDesM is 
+  decreased during the maneuvre
+  VelDes[x] is used as Vref for speed PID functions
+*******************************************************************************
+[25]
+Idle time estimation
+The program most of the time is in idle main loop just controlling flags set or
+reset by ISRs.
+We know:
+- How much idle loop lasts without serving ISRs:IDLE_TIME_PERIOD
+- How many times idle loop was executed:		IdleCount	
+- Sampling time:								IdleSample * IDLE_SAMPLE_TIME
+were IDLE_SAMPLE_TIME = (ASK_PARAM_TMO * ASK_PARAM_ALL_TMO)
+
+Idle percentage is:
+(IdleCount * IDLE_TIME_PERIOD) / (IdleSample * IDLE_SAMPLE_TIME)
+
+[25a]
+IDLE_TIME_PERIOD is the time measured with stopwatch in SIM from start to end
+
+*******************************************************************************
+[26]
+
+*******************************************************************************
+[27]
+
+*******************************************************************************
+[28]
+Board reset
+The same as boot, the EEPROM parameters are not modified. 
+For security reason, the command has to be sent three times consecutively.
+The Supervisor disables all interrupts. This stops also the 1ms signal sent to
+MCs. Without this input, after the watchdog period MCs restart themselves.
+Then it's time for supervisor too to execute a SW reset.
+
+*******************************************************************************
+[29]
+parameters are sent as long var with 4 bytes.
+They are multiplied in advance by a power of ten in order to maintain precision
+so, they need to be divided by the same number to get back the float var with
+the right precision
+
+[29a] Starting constant parameters for Rino robotic platform
+/* Speed calculation K in micron/second = 298536736
+	Speed calculation K in m/s as a power of 2 to simplify dsPID elaboration
+	Kvel[] << 15 ( x 2^15)
+	long, 2 x 4 bytes = 8 byte
+*/
+Kvel[1] = 26290341;		// EEvalue[0]-[1]
+Kvel[2] = 26290341;		// EEvalue[2]-[3]
+					
+// KP, KI, KD x Angle PID
+// fractional, 3 x 2 = 6 bytes
+ANGLE_KP=Q15(0.9999);	// EEvalue[4]
+ANGLE_KI=Q15(0.2);		// EEvalue[5]
+ANGLE_KD=Q15(0.0001);	// EEvalue[6]
+
+// KP, KI, KD x Speed PID MC1 e MC2 (dsPID) in int x 10.000 
+// int, 2MCs x 3params x 2bytes = 12 bytes
+Kpid[0][0] = 6000;		// EEvalue[10]
+Kpid[0][1] = 6000;		// EEvalue[11]
+Kpid[1][0] = 2000;		// EEvalue[12]
+Kpid[1][1] = 2000;		// EEvalue[13]
+Kpid[2][0] = 200;		// EEvalue[14]
+Kpid[2][1] = 200;		// EEvalue[15]
+
+// constants for traveled distance calculation: SPACE_ENC_4X in mm	
+// float, 2 x 4 = 8 bytes
+Ksp[1] = 0.00506145483078356;	// EEvalue[16]-[17]
+Ksp[2] = 0.00506145483078356;	// EEvalue[18]-[19]
+
+0.007363108
+
+// base width, distance between center of the wheels
+// float, 1 x 4 = 4 bytes
+Axle = 185.2222;		// EEvalue[20]-[21]
+#define SEMI_AXLE Axle/2
+
+*******************************************************************************
+[30]
+Console debug
+JUST FOR DEBUG
+The SW acts as a loopback, sending back to the console some values proportional
+to other received values, in order to check communication and right decoding
+and encoding of received and transmitted packets.
+
+*******************************************************************************
+[31]
+Continuos send mode, sends all data without request.
+	0=OFF 
+	1=sends mean parameters
+	2=sends detailed parameters
+As a debug or data logging mode. All data requested will be sent continuosly
+until set to 0, without further request and without any protocol or handshake, 
+just raw data tab delimited and CR terminated.
+The command can be sent via a simple communication program sending  the 
+following strings
+	as decimal 
+		OFF			64 0 99 2 0 165
+		mean values	64 0 99 2 1 166
+		details		64 0 99 2 2 167
+	as HEX
+		OFF			40 00 63 02 00 A5
+		mean values	40 00 63 02 01 A6
+		details		40 00 63 02 02 A7
+
+Data will be receives as two bytes for each int value:
+Mean values
+speedH-speedL currH-currL PosXH-PosXL PosYH-PosYL ThetaH-ThetaL-LF-CR
+16 bytes
+Detailed values
+VRH-VRL VLH-VLL CurrRH-CurrRL CurrLH-CurrLL TickRH-TickRL TickRH-TickRL-CR-CF
+19 bytes
+
+*******************************************************************************
+[32]
+Scheduler
+Acting as a "Washing Machine Timer" it schedules the behavior of the bot 
+executing a series of primitives. The sequence is written in some arrays and it
+is synchronized by external events.
+Some higher priority events (e.g.: obstacles found by external sensors) can 
+override scheduling.
+Each kind of primitive has his own code:
+
+code	Theta	Speed	X	Y	D
+0		0		0
+1		*		V
+2		*		*(2)			D
+3		Theta	*(2)
+4		Theta(1)*(2)	X	Y
+5				*(2)	X	Y
+6		wait
+
+notes
+* 	means previous, unchanged value
+(1) Theta computed as a direction toward X, Y coordinates
+(2) keeps speed if V = FFFF, otherwise sets also speed
+
+Description
+0	stop	end of sequence
+1	keep previous angle		-	set speed
+2	keep angle and speed(2)	-	set distance
+3	keep speed(2)			-	set angle
+4	keep speed(2)			- 	set angle toward X, Y
+5	keep speed(2)			-	walk toward X, Y
+6	wait n ms
+
+Units	
+	Angle(deg)	
+	Speed(mm/s)	
+	X(mm)	
+	Y(mm)	
+	D(mm)	
+	Delay(n x 50ms)
+
+Meaning of parameters
+code	A		B		C
+0		
+1		V
+2		V(2)	D
+3		V(2)	Theta	
+4		V(2)	X		Y
+5		V(2)	X		Y
+6		Delay
+
+
+Example of usage for a UMBmark:
+index	code	parameters		description
+0		6		100				wait 5s
+1		4		0 4000			heading to coordinates 0, 4000
+2		5		300 0 4000		travel at V=300mm / till coordinates 0, 4000
+3		4		4000 4000		heading to coordinates 4000, 4000
+4		5		300 4000 4000	travel at V=300mm / till coordinates 4000, 4000
+5		4		4000 0			heading to coordinates 4000, 0
+6		5		300 4000 0		travel at V=300mm / till coordinates 4000, 0
+7		4		0 0				heading to coordinates 0, 0
+8		5		300 0 0			travel at V=300mm / till coordinates 0, 0
+9		3		0				heading to Theta = 0
+10		0					stop
+
+int SchedValues[16][4]= {		{6,100,0,0},
+								{4,0,0,4000},
+								{5,300,0,4000},
+								{4,0,4000,4000},
+								{5,300,4000,4000},
+								{4,0,4000,0},
+								{5,300,4000,0},
+								{4,0,0,0},
+								{5,300,0,0},
+								{3,0,0,0},
+								{0,0,0,0},
+								{0,0,0,0},
+								{0,0,0,0},
+								{0,0,0,0},
+								{0,0,0,0},
+								{0,0,0,0} };
+
+[32a]
+The scheduler is enabled only if Sensor Board sends a parameter. 
+If any navigation command come from outside it ovverrides the current sequence.
+
+*******************************************************************************
+[33]
+The storage in program memory of different parameters is executed with the code
+from Microchip application note AN1095:
+Emulating Data EEPROM for PIC18 and PIC24 Microcontrollers and dsPIC® 
+Digital Signal Controllers
+
+*******************************************************************************
+[34]
+Compilation switches
+this software can be used with some kind of board, prototypes or definitive. 
+With this #defines different configurations are available without rewriting the
+code. Just comment or uncomment the relative lines.
+Right now these configurations are available:
+-oscillator 7.3728MHz or 10MHz
+-dsPIC33FJ128MC802 (28 pins)
+	- prototype or 990.011 Droids board
+-dsPIC33FJ128MC804 (44 pins)
+	-dsNav prototype board or Robocontroller board
+
+[34a]
+Reads config setting from code instead of simulated eeprom in order to save
+writing cycles during debug
+
+[34b]
+ifdef oscillator quartz = 10MHz, else = 7.3728MHz
+
+[34c]
+ifdef configuration for prototype, else for 990.011 Droids board
+990.011 board requires a dsPIC33FJ128MC802
+
+[34d] 
+Another prototype, it also requires a 44 pin dsPIC
+
+[34e]
+Don't consider obstacle distance revealed by SensorsBoard
+
+===============================================================================
+/* dsPID4W Version History ////////////////////////////////////////////////////
+1.0.0 	- October 2012
+-porting on dsNav board for a 4Wheel drive master-slave control
+
+===============================================================================
+/* dsPID33 Version History ////////////////////////////////////////////////////
+2.0.0 	- may 2008
+-porting of both MC parts of the project on one dsPIC33FJ32MC302 with two QEI 
+ interfaces
+2.0.1	- july 2008
+-both MCs ported. 
+ It requires 5.7us to perform both PIDs, 5.37us without ramp.
+ With speed calculation (Vel1 = Kvel1*IcIndxTmp/IcPeriodTmp) it requires 26.4us
+ To perform just the PID library function 0.825us
+2.0.2	- july 2008
+-start porting of dsODO part of the project too on a single chip.
+ In order to have enough RAM for field mapping, now a dsPIC33FJ64MC802 is used.
+ Both speed PIDs are executed every 1ms. Orientation PID every 10ms, distance
+ PID every 50ms.
+ Even if all of the three PIDs are executed in un cycle, it requires less then
+ 400us overall.
+-everything is a lot simplified without the need of high speed communications 
+ between separated MCs and Supervisor.
+2.0.3	- august 2008
+-porting almost completed with some bug fixes and improvements 
+-DMA used for TX simplifies even more the program development and reduces a lot
+ the effort of the DSC.
+2.0.4	- october 2008
+- full debug on HW done
+- PID parameters almost OK, it walks and turns regularly with a good measured
+  precision
+- developed Scheduler procedure
+
+2.1.0 - december 2008
+- Written an article about Rino, dsNavCon and dsNavCon33, to be published on 
+  Circuit Cellar #224-225
+- Sensor Board designed, developed and programmed. This board, wrapped around
+  an Arduino board, controls 3 x SRF08 ultrasound range finders, 3 x GP2D120
+  Sharp infrared sensors, 3 x optical switch bumpers, 3 x light sensors, 2 x
+  Figaro TGS822 gas sensors. This board sends environment infos (obstacle and
+  targets) via serial communication, in order to allow dsNavCon33 to navigate,
+  for both RTC or Explorer senior contests.
+- Starting of development for UART2 communication with SensorBoard.
+
+2.1.0 is a stable version with basic movement functions, useful for demos
+
+2.1.1 - december 2008
+- UART2 communication complete. Sensor board sends obstacles and target data
+  to dsNavCon board.
+- Starting development of obstacle avoidance strategies
+
+2.1.3 - may 2009
+- Obstacle avoidance code written, yet to test
+- Start writing of parameters storage in flash memory
+
+2.1.5 - june 2009
+- start writing of double version for both 28 pin and 44 pin dsPIC series
+
+2.2.0 - november 2009
+- some bugs fixed
+- added compass bearing reading from sensors board
+- first version for 990.011 Droids board
+
+2.2.1 - february 2010
+- some minor bugs fixed
+- it can now be compiled to run on prototype board, Droids 990.011 dsNav 
+  board, prototype board with 44pins smd dsPIC or Katodo Robocontroller
+- first version that participated to RTC real test in Von Neumann gymnasyum
+- most of the time spent on mechanical parameters calibration via UMBmark
+
+2.2.2 - march 2010
+- found a bug in AnglePID that cumulates a very small amount of error in 
+  history (integral part of the PID) at every orientation assignment
+- this version is compatible with:
+  version 1.4.0  telemetry console, dsNavConsole Processing sketch
+  version 1.3.0  Arduino SensorBoard sketch
+- this is a stable version that performs UMBmark test as shown in:
+	http://www.guiott.com/Rino/RinoUMBmark/RinoUMBmark.htm
+
+2.2.3 - june 2010
+- field mapping (SLAM) procedures debugged and tested also with 
+  dsNavConsole 1.5.0
+  
+2.2.4 - august 2010
+- added transmission of sensors raw data toward console (command Q)
+  this function is implemented on dsNavConsole starting from ver.1.6.1
+  
+2.2.5 - july 2011
+- the procedure to compute the repulsive force field of the obstacles has
+  been optimized
+
+===============================================================================
+/* dsPID Version History //////////////////////////////////////////////////////
+
+--	- Startup may 2007
+
+0.0 - august 7th 2007
+-registration of the project to Circuit Cellar Contest with number MT2155
+
+0.1	- september 20th 2007
+-First project sent to Circuit Cellar Contest Administrator
+
+0.2	- october 5th 2007
+-Second sending to Circuit Cellar Contest Administrator.
+
+0.8	- november 2007
+-Some bugs fixing
+-Implemented circular queue for communication procedures to obtain a best
+ separation between second and third communication layer 
+-Augmented robustness of the communication protocol 
+
+0.9 - december 2007
+-First real steps of the boy! The bot travels on a straight line at any speed,
+ responding to remote commands. Is it possible to control the speed of both
+ wheels obtaining any kind of trajectories.
+ As calculated theoretically, the movement is smooth and controlled between
+ 0.025 and 0.5 m/s. Below that minimum the control is noisy with irregular
+ rotation of the wheels, even if the bot still go straight. Above the maximum
+ speed of 0.5 m/s the movement may become uncontrolled since the PID has no
+ more margins of controls to compensate variations of load or power supply.
+ The maximum uncontrolled speed, with a full charged battery pack is about
+ 0.6 m/s.
+
+1.0 - december 2007
+
+===============================================================================
+/* dsODO Version History //////////////////////////////////////////////////////
+
+
+--	- Startup july 2007
+
+0.0 - august 7th 2007
+-registration of the project to Circuit Cellar Contest with number MT2155
+
+0.1	- september 2007
+-First project sent to Circuit Cellar Contest Administrator
+
+0.2	- october 2007
+-Second sending to Circuit Cellar Contest Administrator.
+-Added procedures for Dead Reckoning
+
+0.8	- november 2007
+-Some bugs fixing
+-Implemented circular queue for communication procedures to obtain a best
+ separation between second and third communication layer 
+-Augmented robustness of the communication protocol 
+
+0.9 - december 2007
+-First real steps of the boy! The bot travels on a straight line at any speed,
+ responding to remote commands. Is it possible to control the speed of both
+ wheels obtaining any kind of trajectories.
+ As calculated theoretically, the movement is smooth and controlled between
+ 0.025 and 0.5 m/s. Below that minimum the control is noisy with irregular
+ rotation of the wheels, even if the bot still go straight. Above the maximum
+ speed of 0.5 m/s the movement may become uncontrolled since the PID has no
+ more margins of controls to compensate variations of load or power supply.
+ The maximum uncontrolled speed, with a full charged battery pack is about
+ 0.6 m/s.
+-Tested and debugged dead-reckoning procedure including telemetry of position.
+
+1.0 - march 2008
+-Updated telemetry with a completely new interface on PC written with
+ Processing.
+-The new GUI allows the live modification of all the PID and mechanical
+ constants. Added some new commands parsing from telemetry.
+-Added parameters storing on EEPROM.
+-Added PID for rotation angle and for distance.
+
+===============================================================================
+
+
+REMINDERS
+===============================================================================
+fractional calculi
+K1 = Q15(0.07);
+K2 = Q15(0.2);
+K3 = ((long)(K1)<<15)/ K2;
+VelFloat=Fract2Float(K3);
+===============================================================================
+TABLE 7-1: INTERRUPT VECTORS - dsPIC30F DSCs (NON-SMPS)
+IRQ# 	Primary Name 		Alternate Name 			Vector Function
+N/A 	_ReservedTrap0 		_AltReservedTrap0 		Reserved
+N/A 	_OscillatorFail 	_AltOscillatorFail 		Oscillator fail trap
+N/A 	_AddressError 		_AltAddressError 		Address error trap
+N/A 	_StackError 		_AltStackError 			Stack error trap
+N/A 	_MathError 			_AltMathError 			Math error trap
+N/A 	_ReservedTrap5 		_AltReservedTrap5 		Reserved
+N/A 	_ReservedTrap6 		_AltReservedTrap6 		Reserved
+N/A 	_ReservedTrap7 		_AltReservedTrap7 		Reserved
+0 		_INT0Interrupt 		_AltINT0Interrupt 		INT0 External interrupt 0
+1 		_IC1Interrupt 		_AltIC1Interrupt 		IC1 Input capture 1
+2 		_OC1Interrupt 		_AltOC1Interrupt 		OC1 Output compare 1
+3 		_T1Interrupt 		_AltT1Interrupt 		TMR1 Timer 1 expired
+4 		_IC2Interrupt 		_AltIC2Interrupt 		IC2 Input capture 2
+5 		_OC2Interrupt 		_AltOC2Interrupt 		OC2 Output compare 2
+6 		_T2Interrupt 		_AltT2Interrupt 		TMR2 Timer 2 expired
+7 		_T3Interrupt 		_AltT3Interrupt 		TMR3 Timer 3 expired
+8 		_SPI1Interrupt 		_AltSPI1Interrupt 		SPI1 Ser. per. interface 1
+9 		_U1RXInterrupt 		_AltU1RXInterrupt 		UART1RX Uart 1 Receiver
+10 		_U1TXInterrupt 		_AltU1TXInterrupt 		UART1TX Uart 1 Transmitter
+11 		_ADCInterrupt 		_AltADCInterrupt 		ADC convert completed
+12 		_NVMInterrupt 		_AltNVMInterrupt 		NMM NVM write completed
+13 		_SI2CInterrupt 		_AltSI2CInterrupt 		Slave I2C™ interrupt
+14 		_MI2CInterrupt 		_AltMI2CInterrupt 		Master I2C™ interrupt
+15 		_CNInterrupt 		_AltCNInterrupt 		CN Input change interrupt
+16 		_INT1Interrupt 		_AltINT1Interrupt 		INT1 External interrupt 0
+17 		_IC7Interrupt 		_AltIC7Interrupt 		IC7 Input capture 7
+18 		_IC8Interrupt 		_AltIC8Interrupt 		IC8 Input capture 8
+19 		_OC3Interrupt 		_AltOC3Interrupt 		OC3 Output compare 3
+20 		_OC4Interrupt 		_AltOC4Interrupt 		OC4 Output compare 4
+21 		_T4Interrupt 		_AltT4Interrupt 		TMR4 Timer 4 expired
+22 		_T5Interrupt 		_AltT5Interrupt 		TMR5 Timer 5 expired
+23 		_INT2Interrupt 		_AltINT2Interrupt 		INT2 External interrupt 2
+24 		_U2RXInterrupt 		_AltU2RXInterrupt 		UART2RX Uart 2 Receiver
+25 		_U2TXInterrupt 		_AltU2TXInterrupt 		UART2TX Uart 2 Transmitter
+26 		_SPI2Interrupt 		_AltSPI2Interrupt 		SPI2 Ser. per. Interface 2
+27 		_C1Interrupt 		_AltC1Interrupt 		CAN1 combined IRQ
+28 		_IC3Interrupt 		_AltIC3Interrupt 		IC3 Input capture 3
+29 		_IC4Interrupt 		_AltIC4Interrupt 		IC4 Input capture 4
+30 		_IC5Interrupt 		_AltIC5Interrupt 		IC5 Input capture 5
+31 		_IC6Interrupt 		_AltIC6Interrupt 		IC6 Input capture 6
+32 		_OC5Interrupt 		_AltOC5Interrupt 		OC5 Output compare 5
+33 		_OC6Interrupt 		_AltOC6Interrupt 		OC6 Output compare 6
+34 		_OC7Interrupt 		_AltOC7Interrupt 		OC7 Output compare 7
+35 		_OC8Interrupt 		_AltOC8Interrupt 		OC8 Output compare 8
+36 		_INT3Interrupt 		_AltINT3Interrupt 		INT3 External interrupt 3
+37 		_INT4Interrupt 		_AltINT4Interrupt 		INT4 External interrupt 4
+38 		_C2Interrupt 		_AltC2Interrupt 		CAN2 combined IRQ
+39 		_PWMInterrupt 		_AltPWMInterrupt 		PWM period match
+40 		_QEIInterrupt 		_AltQEIInterrupt 		QEI position count. compare
+41 		_DCIInterrupt 		_AltDCIInterrupt 		DCI CODEC tranfer completed
+42 		_LVDInterrupt 		_AltLVDInterrupt 		PLVD low voltage detected
+43 		_FLTAInterrupt 		_AltFLTAInterrupt 		FLTA MCPWM fault A
+44 		_FLTBInterrupt 		_AltFLTBInterrupt 		FLTB MCPWM fault B

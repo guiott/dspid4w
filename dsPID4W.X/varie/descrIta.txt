@@ -1,0 +1,673 @@
+Controllo di un motore con PID
+
+-------------------------------------------------------------------------------
+Copyright 2008 Guido Ottaviani
+g.ottaviani@mediaprogetti.it
+
+	dsPID is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    dsPID is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with dsPID.  If not, see <http://www.gnu.org/licenses/>.
+-------------------------------------------------------------------------------
+
+La scheda dsPID e' composta da due dsPIC30F4012 che controllano i motori 
+ed un dsPIC30F3013 che fa da supervisore ai due motor controller.
+Il supervisore comunica in RS232 con i due MC in modo bidirezionale inviando 
+i parametri di movimento (velocita' desiderata, direzione, accelerazione, ecc.)
+e ricevendo i parametri istantanei (velocita', posizione, ecc.).
+Il supervisore esegue i calcoli di odometria e mappatura del territorio e
+scambia i risultati con il main controller in I2C e trasmette i dati per
+la telemetria tramite modem RF.
+
+Fosc			Fcy	(PLL x 16)		Tcy
+7,3728MHz		29,4912Mips			33,9084ns
+
+Questa e' la parte di controllo di un singolo motore.
+
+dsPIC30F4012
+
+1	MCLR		
+2	VREF+		/EMUD3/AN0 VREF+/CN2/RB0	Riferimento ADC	
+3	AN1			EMUC3/VREF-/CN3/RB1			Lettura corrente motore
+4				AN2/SS1/CN4/RB2
+5	CN5			INDX/AN3/RB3				Chip select generico da supervisor
+6	QEA			/IC7/AN4/CN6/RB4			Quadrature encoder 
+7	QEB			/IC8/AN5/CN7/RB5			Quadrature encoder
+8	VSS		
+9	OSC1		/CLKI				
+10				/CLKO/RC15					? (forse basta OSC1 da supervisor)
+11	U1ATX		/EMUD1/SOSCI/T2CK/CN1/RC13	Seriale TX
+12	U1ARX		/EMUC1/SOSCO/T1CK/CN0/RC14	Seriale RX
+13	VDD		
+14	IC2			/RD1/EMUD2/OC2/INT2			Velocity measurement
+15	INT1		/EMUC2/IC1/OC1/RD0			TX enable
+16	INT0		/SCK1/OCFA/RE8/FLTA			Timer 1ms da supervisor 
+											(comune ai due Motor Control)
+17	PGD/EMUD	/U1TX/SDO1/SCL/RF3/C1TX
+18	PGC/EMUC	/U1RX/SDI1/SDA/RF2/C1RX
+19	VSS		
+20	VDD		
+21				RE5/PWM3H				
+22	RE4			PWM3L						Led 2			
+23	RE3			PWM2H						Led 1
+24	RE2			PWM2L						H bridge enable
+25	PWM1H		/RE1						PWM
+26	PWM1L		/RE0						PWM
+27	AVSS		
+28	AVDD		
+
+
+*******************************************************************************
+
+[1]
+Il watchdog e' disabilitato in fase di sviluppo e debug.
+
+Nella versione finale sara' abilitato a 80ms. 
+Il CLRWDT e' solo all'interno della ISR di INT1 (richiesta di trasmissione da 
+parte del supervisore), in questo modo il sistema non parte fino a quando non 
+arriva una richiesta del supervisore e, in caso di mancanza di collegamento 
+con questo, il SW si riavvia e si mette in modalita' idle dopo 80ms che, 
+al massimo della velocita', corrispondono a circa 5cm di spazio percorso.
+
+[1a]
+Il SW parte mettendo a OFF l'enable del ponte ad H e accendendo il LED di 
+controllo, il LED e' poi spento nella stessa ISR nella quale viene azzerato 
+il watchdog timer mentre l'enable e' attivato dalla routine PID.
+In questo modo il LED e' acceso fisso se il sistema e' in idle perche' non 
+riceve comandi dal supervisore.
+Durante il funzionamento normale il led viene fatto lampeggiare nel ciclo main
+con un duty cycle del 20%
+
+*******************************************************************************
+
+Sono usate le seguenti periferiche del 4012:
+
+============================
+[2]
+AN1 Lettura corrente motore tramite Rsense sul ponte ad H
+_ADCInterrupt
+
+E' usato solo il CH0 collegato a:
+Positivo a AN1				= ADC_CH0_POS_SAMPLEA_AN1
+Negativo a Vref-			= ADC_CH0_NEG_SAMPLEA_NVREF
+Conversion clock di sistema = ADC_CONV_CLK_SYSTEM
+Conversion trigger auto		= ADC_CLK_AUTO
+Auto sampling				= ADC_AUTO_SAMPLING_ON
+L'ADC e' messo in auto-lettura continua: 
+Auto-Convert Conversion Trigger + Auto-Sample Start
+con un numero di samples tra gli interrupt = 16:
+							= ADC_SAMPLES_PER_INT_16
+Conversion clock select		= ADC_CONV_CLK_32Tcy
+Auto Sample Time			= ADC_SAMPLE_TIME_31
+TAD = TCY(ADCS + 1) / 2		= 1,09us 
+Convertion Time (12 Tad) 	= 13,02us
+Sample Time	(31 Tad)		= 33,64us
+Total Conversion Time		= 46,66us
+Tra un interrupt e l'altro	= 746,53us
+
+Ogni 746us fa la media delle 16 misure accumulate in ADCBUF
+
+[2a]
+La sommatoria e' effettuata nella variabile temporanea.
+La divisione per 16, che corrisponde con uno shift di 4 bit,
+e' effettuata dal barrel shifter in una sola operazione in HW.
+In questo modo la variabile ADCValue contiene sempre il valore
+esatto dell'ultima lettura e puo' essere letto in qualsiasi momento,
+anche ad interrupt.
+
+============================
+[3]
+CN5	Chip select generico da supervisor
+_CNInterrupt
+
+============================
+[4]
+QEA	Quadrature encoder 
+QEB	Quadrature encoder 
+_QEIInterrupt
+
+Motore = 6.000 rpm
+Encoder = 300 cpr 
+Rapporto di riduzione = 30:1
+Ruota = 200 rpm
+Impulsi per giro di ruota = 9.000
+Diametro ruota = 58mm -> circonferenza = 182,2123739mm
+Spazio percorso per ogni impulso encoder = 0,020245819mm
+Spazio percorso per ogni impulso modalita' 2x Delta S = 0,01012291mm
+Spazio percorso per ogni impulso modalita' 4x Delta S = 0,005061455mm
+
+Velocita' massima = circonferenza * rpm / 60 = 182,212mm * 200 / 60 = 60cm/s
+Frequenza massima encoder = (200 * 9.000) / 60 = 30KHz
+Periodo minimo impulso encoder = 0,0000333333333333s (33us = 16,6 * 2)
+Frequenza massima QEI 4x = 30 KHz * 4 = 120KHz
+Numero massimo impulsi in 1ms in modalita' 4x = 120 -> 1 impulso ogni 8.33us
+
+Velocita' minima = 182,212 * 20 / 60 = 6cm/s
+Frequenza minima encoder = (20 * 9.000) / 60 = 3KHz
+Periodo massimo impulso encoder = 0,000333333333333s (330us = 166 * 2)
+Frequenza minima QEI 4x = 3 KHz * 4 = 12KHz
+
+Filtro digitale sui segnali dell'encoder
+FILTER_DIV=(MIPS x FILTERED_PULSE)/3=(29.491.200 x 1,66667E-05)/3=163,84
+con una divisione di 128 si ottiene un filtro di circa 13us
+l'impulso più corto (@ 30 KHz) e' di 16us.
+
+Nei due Motor Controller (MC) c'e' lo stesso programma.
+I due motori sono montati in posizione opposta uno dall'altro, percio'
+le fasi degli encoder (QEA e QEB) dovranno essere collegate in modo opposto
+per mantenere il giusto verso di rotazione.
+
+============================
+[5]
+OSC1				
+OSC0 durante lo sviluppo usera' l'oscillatore classico a quarzo da 
+7,3728MHz 16xPLL.
+Quando sara' collegato nella scheda definitiva prendera' il clock dal 
+supervisore: mettendo il quarzo solo sul supervisore (dsPIC30F3013), 
+e programmando una sua uscita OC simple PWM per avere un PWM al 50% con una 
+frequenza uguale a quella del quarzo:
+PWM period = [(PRx) + 1] • 4 • TOSC • (TMRx prescale value)
+con Prx =3 e prescale=1, ho di nuovo la 7,3728 MHz in uscita.
+Con questa uscita si possono pilotare i MC in modalita' EC 16xPLL. 
+Tutti hanno esattamente la stessa frequenza e si risparmiano un po' di 
+componenti.
+
+============================
+[6]
+La UART e' inizializzata dopo lo start da parte del supervisore
+
+[6a]
+U1ATX	Seriale TX verso il supervisor
+_U1TXInterrupt
+
+Il pin di TX e' disabilitato in fase di inizializzazione, e' configurato a 
+default come input e quindi e' in alta impedenza. Questo permette di mettere 
+in parallelo i TX dei due motor control. I TX saranno abilitati solo uno per 
+volta dal supervisore tramite INT1
+
+[6b]
+U1ARX	Seriale RX dal supervisor
+_U1RXInterrupt
+
+La ricezione avviene contemporaneamente sui due MC, la decodifica del messaggio
+viene pero' fatta solo se corrisponde l'ID.
+Un messaggio puo' anche essere inviato a tutti i MC tramite l'indirizzo 
+broadcast = 0.
+Il messaggio e' composto dai seguenti elementi (array di unsigned char):
+Header	 @
+Id		 0-9 	ASCII
+Cmd		 A-Z 	ASCII
+CmdLen	 1-MAX_RX_BUFF	numero byte che seguono (inclusa la checksum)
+		 ...	dati 
+		 ...
+Checksum 0-255	semplice somma a 8 bit di tutti i byte che compongono il 
+messaggio escluso l'ultimo (checksum stessa)
+
+La routine interpreta comunque 
+0) Header
+1) Id
+2) Cmd
+3) CmdLen
+per capire quanti byte si deve aspettare, anche se non viene avviato il parsing
+del pacchetto, serve per sincronizzare la ricezione successiva.
+Quando non e' nello stato idle o di parsing dei comandi, ad ogni byte ricevuto 
+viene azzerato un timer, se il timer supera il valore di timeout impostato la 
+procedura viene annullata e si segnala l'errore.
+Il timeout e' disabilitato in fase di debug Stand Alone.
+
+Errori
+-9 Parsing comandi non completo
+-8 Buffer overflow
+-7 Comando non riconosciuto
+-6 Stato sconosciuto
+-5 Fuori sequenza comandi
+-4 Overrun error
+-3 Frame error  
+-2 Timeout error
+-1 Checksum error
+
+Stati ricezione
+0 Idle
+1 Ricevuto header
+2 Ricevuto e riconosciuto Id
+3 Ricevuto ma NON riconosciuto Id (riceve il comando ma non lo interpreta)
+4 Ricevuto Comando
+5 Ricevuta lunghezza comando
+6 Attesa fine comando
+99 Finita con successo ricezione comando, avvia parser
+
+[6c]
+In caso di errore (vedi sopra) la routine UartRxError fa accendere il led 2
+
+============================
+[7]
+IC2	Velocity measurement
+_IC2Interrupt
+
+input capture per la misura del periodo tra un tick e l'altro dell'encoder, 
+collegato in parallelo a QEA.
+Cattura sul fronte di salita del segnale dell'encoder.
+Timer prescaler = 1 -> periodo = 33,90842ns
+velocita' massima (200 rpm) -> 1000 impulsi del timer per tick dell'encoder:
+30 misure per ms
+velocita' minima  (20  rpm) ->10000 impulsi del timer per tick dell'encoder:
+3 misure per ms
+Viene usato il TIMER2 in modalita' free-running, ad ogni interrupt di IC si 
+memorizza il valore attuale di TMR2 e da questo si sottrae il precedente,
+questo e' il periodo dell'impulso.
+Poi il valore attuale diventa il precedente in attesa della prossima misura.
+[7a]
+Si deve controllare il flag di TMR2 per capire se e' andato in overflow, 
+in questo caso alla misura attuale si deve sommare la differenza tra 0xFFFF e 
+la misura precedente.
+[7b]
+in funzione del segno del bit _UPDN i campioni sono accumulati algebricamente
+per calcolare anche il segno della velocita'
+
+============================
+[8]
+INT1	TX enable
+_INT1Interrupt
+
+Le porte di comunicazione seriale dei due motor control sono in parallelo tra 
+loro.
+I messaggi inviati dal supervisore arrivano quindi ad entrambi i MC e sono 
+distinti tramite un codice di indirizzo.
+La trasmissione invece avviene solo tramite il controllo del supervisore con il 
+TX enable, solo un MC per volta trasmette mentre l'altro e' in alta impedenza.
+
+============================
+[9]
+INT0 Timer 1ms da supervisor (comune ai due motor control)
+_INT0Interrupt
+
+il clock per il calcolo di posizione e velocita', viene dal supervisore.
+In questo modo i due MC effettueranno la misura esattamente nello stesso 
+momento.
+
+Nella fase di sviluppo il clock sara' generato da un timer interno.->[13]
+
+============================
+[10]
+RE4	Led 2 rosso = error -> [6c]			
+RE3	Led 1 verde = program running -> [1a]
+LED segnalazione
+
+============================
+[11]
+RE2	H bridge enable
+PWM1H	PWM_H
+PWM1L	PWM_L
+_PWMInterrupt
+
+Nei due Motor Controller (MC) c'e' lo stesso programma.
+I due motori, essendo montati in posizione opposta uno dall'altro, dovranno
+essere collegati in modo opposto per quanto riguarda l'alimentazione del
+motore vero e proprio (PWMH e PWML) per mantenere il giusto verso di rotazione.
+
+PTPER = FCY (FPWM • (PTMR Prescaler)) - 1
+Es.:
+Fosc			Fcy	(PLL x 16)
+7,3728MHz		29,4912Mips	
+
+PTPER = (29.4921.000 / 14.392) - 1 = 2048
+		
+============================
+[12]
+TIMER 2
+_T2Interrupt
+
+usato dall'Input Capture per la misura della velocita'
+E' caricato con il valore 0xFFFF all'inizializzazione e poi va in 
+"free running mode", in questo modo il valore letto dal timer e' il periodo
+dell'impulso.
+L'overflow di TIMER2 avviene a Tcy * 65.535 = 2,222ms, molto maggiore del
+periodo di campionamento di 1ms, essendo in free running, puo' avvenire al 
+massimo una volta per ciclo e va, in questo caso, considerato per la misura del
+periodo. -> [7a]
+
+============================
+[13]
+TIMER 1
+_T1Interrupt
+
+usato durante lo sviluppo per la generazione del clock a 1000Hz, necessario al 
+calcolo del PID e della posizione.
+Poi sara' sostituito da un interrupt su INT0 proveniente dal supervisore.->[9]
+Tcy * (65.535 - 36.044) = Tcy * 29.491 = 999,9932183us
+
+*******************************************************************************
+
+[14]
+Nei due Motor Controller (MC) c'e' lo stesso programma.
+I due MC sono identificati tramite un codice (unsigned char Id) per permettere
+il giusto indirizzamento da parte del supervisore.
+All'init il programma rimane in wait prima del ciclo idle del main, in attesa
+che il supervisore lo abiliti tramite CN5. A questo punto gli viene comunicato
+l'Id che sara' usato in futuro per identificarlo. L'Id di partenza e' 9 per
+entrambi i MC.
+Il supervisore effettuera' quindi le due identificazioni in tempi successivi
+assegnando gli indirizzi definitivi.
+
+*******************************************************************************
+[15]
+modalita' debug Stand Alone.
+Durante lo sviluppo l'MCU non e' collegato al supervisore, ci sono quindi 
+alcune differenze nel SW rispetto alla versione finale:
+a) time clock di sistema ->[13]
+b) la velocita' dell'uart e' limitata al massimo raggiungibile da un computer
+c) watchdog disabilitato ->[1] 
+d) il clock della MCU e' generato da un quarzo invece che dal supervisore ->[5]
+e) il timeout sulla ricezione seriale e' disabilitato ->[6b]
+f) il calcolo della checksum e' disabilitato
+g) il programma parte senza aspettare l'OK dal supervisore
+
+[15a]
+modalita' sviluppo con clock interno
+
+*******************************************************************************
+[16]
+Parser comandi.
+Si disabilita l'interrupt da RX per evitare che un nuovo comando possa 
+sovrascrivere quello in analisi. L'RX buffer e' di 4 byte, se non si analizza 
+il comando prima che arrivi il quinto carattere, si genera un OVERRUN error
+
+I comandi riconosciuti sono:
+
+H- Halt immediato dei motori senza rampa
+	-Riceve:
+	CmdLen = 1 Parametri 0
+	-Trasmette:	
+	N/A	
+W- Impostazione valore velocita' di riferimento in mm/s
+	-Riceve:
+	CmdLen = 3	Parametri 2	(1 int Most Significant First) range -999 +999
+	-Trasmette:	
+	N/A
+A- Richiesta di tutti i parametri: V, C, P
+	-Riceve:
+	CmdLen = 1 Parametri 0
+	-Trasmette:	
+	CmdLen = 7	Parametri 6	(3 int Most Significant First)
+V- Richiesta valore velocita' misurata in mm/s
+	-Riceve:
+	CmdLen = 1 Parametri 0
+	-Trasmette:	
+	CmdLen = 3	Parametri 2	(1 int Most Significant First) range -999 +999
+C- Richiesta valore corrente motore		
+	-Riceve:
+	CmdLen = 1 Parametri 0
+	-Trasmette:	
+	CmdLen = 3	Parametri 2	(1 int Most Significant First) range 0 +4096
+P- Richiesta valore posizione		
+	-Riceve:
+	CmdLen = 1 Parametri 0
+	-Trasmette:	
+	CmdLen = 3	Parametri 2	(1 int Most Significant First) range -32000 +32000
+I- Assegnazione dell'Id. All'accensione tutti i MC hanno Id = 9. -> [14]
+	-Riceve:
+	CmdLen = 2	Parametri 1 (1 char)
+	-Trasmette:	
+	N/A
+K- Assegnazione dei parametri PID: KP, KI, KD
+	-Riceve:
+	CmdLen = 11	Parametri 10 (3 int MSF) = (Kx * 1000) range 0 999
+								 (1 long MSF) = Kvel
+	-Trasmette:	
+	N/A
+
+---I comandi in minuscolo sono usati per il debug
+e- Echo della stringa ricevuta, serve per il debug.
+	CmdLen variabile
+p- PWM, solo per il debug
+	-Riceve:
+	CmdLen = 3	Parametri 2	(1 int Most Significant First) range 0-4095
+	-Trasmette:
+	N/A
+f- Frequenza PWM, solo per il debug
+	-Riceve:
+	CmdLen = 3	Parametri 2	(1 int Most Significant First) range 0-4095
+	-Trasmette:
+	N/A
+c- Continuos send mode, invia i dati senza la richiesta del supervisore
+	solo per il debug. 0=OFF 1=ON
+	-Riceve:
+	CmdLen = 2	Parametri 1	(1 char) range 0-1
+	-Trasmette:
+	N/A
+
+*******************************************************************************
+[17]
+Calcolo CheckSum
+La Checksum e' una semplice somma a 8 bit di tutti i byte che compongono il 
+messaggio, escluso l'ultimo (checksum stessa).
+
+unsigned char UartChkSum (unsigned char *Buff,unsigned int BuffSize)
+
+I parametri necessari sono:
+Puntatore al buffer che contiene i dati da elaborare
+Numero dei caratteri da elaborare
+
+Ritorna:
+Il valore della CheckSum in una variabile char (0-255)
+
+*******************************************************************************
+[18]
+Trasmissione dei parametri
+Invia al supervisore i parametri richiesti, seguendo il protocollo stabilito.
+Per fare questo:
+Riempie il buffer di trasmissione con 
+	header necessario
+	dati
+	CheckSum
+Abilita il flag di trasmissione
+
+void TxParameters(char TxCmd,int TxCmdLen)
+
+I parametri necessari sono:
+	Comando da inviare
+	Numero di byte di dati da inviare
+	I dati sono messi nel buffer UartTmpBuff
+
+Esempio:
+	per inviare i parametri 1, 2, 3, di tipo A:
+		UartTmpBuff[0]=1;
+		UartTmpBuff[1]=2;
+		UartTmpBuff[2]=3;
+		TxParameters('A',3);
+		
+*******************************************************************************
+[19]
+Il conteggio degli impulsi dell'encoder e' accumulato, algebricamente, nella
+variabile Space ogni 1ms.
+Il calcolo dell'odometria e' fatto nel supervisore, quindi la variabile Space
+e' trasferita in seriale e azzerata nel motor controller con un intervallo di
+tempo che potrebbe essere anche maggiore di 1ms.
+Il valore trasferito e' il conteggio degli impulsi come intero.
+La trasformazione in mm e' fatta nel supervisore.
+
+Calcolo velocita' e PID
+-> [4] [7]
+Il calcolo di velocita' e PID avviene ogni millisecondo.
+All'interno del millisecondo la velocita' e' calcolata da un minimo 
+di 6 volte (@ 20 rpm) ad un massimo di 60 (@ 200 rpm) 
+L'errore di quantizzazione massimo e' 1 su 500, in questo caso pero' la media
+nel ms e' effettuata su un campione di 60 misure. Alla velocita' minima la 
+media e' su solo 6 campioni ma l'errore di quantizzazione e' 1 su 5.000
+Viene fatta la sommatoria dei valori di periodo misurati ad ogni impulso,
+allo scadere del millisecondo la velocita' media e' calcolata sulla media dei 
+periodi misurati (sommatoria / indice).
+
+[19a]
+gli interrupt dell'Input Capture possono arrivare molto frequentemente,
+c'e' quindi la possibilita' che i valori misurati possano essere modificati
+durante i calcoli. Per questo sono memorizzati in una variabile temporanea
+e azzerati prima di iniziare i calcoli per la velocita' ed il PID.
+
+[19b]
+il primo interrupt di IC serve per azzerare il contatore quindi l'indice
+perte dal secondo = primo ciclo completo utile
+
+[19c]
+Se indice = 0 non c'e' un impulso nello slot di 1ms:
+se l'indice e' diverso da 0 -> fa la media, altrimenti V = 0.
+La velocita' minima che riesce a misurare e' di 2 cm/s.
+Costante per il calcolo della velocita' in metri/secondo:
+	V = S/T la velocita'e' calcolata sulla media dei campioni in 1ms 
+	Spazio = SPACE_ENC_2X * IcIndx
+		spazio relativo ad un impulso * numero impulsi in 1ms 
+	Tempo = TCY * IcPeriod
+		durata singolo periodo * sommatoria periodi in 1ms
+	Durata singolo periodo = TCY = 1 / FCY	
+	
+	V = (SPACE_ENC_2X * IcIndx) / (TCY * IcPeriod) =
+		= (SPACE_ENC_2X / TCY) * (IcIndx / IcPeriod) =
+		= (SPACE_ENC_2X * FCY) * (IcIndx / IcPeriod) =
+		= Kvel * (IcIndx / IcPeriod)
+	Kvel = SPACE_ENC_2X * (FCY) per avere la velocita' in m/s
+	
+Sono state sperimentate due diverse modalita' di calcolo:
+1- Classica: calcoli eseguiti con variabili float e quindi notevole precisione
+
+	const float KvelFloat = (K_VEL); // 298.5367
+	float VelFloat;	// velocita' in virgola mobile (m/s)
+
+	VelFloat = KvelFloat*IcIndxTmp/IcPeriodTmp; //velocita' media in 1ms 
+	PID_MES = Q15(VelFloat);	// velocita' misurata in m/s (fractional)
+	
+ i calcoli sono appesantiti da variabili float e poi occorre riconvertire il
+ float in fractional prima di chiamare la routine PID.
+ Questa ci mette circa 60us in totale.
+
+2- con variabili long (quindi ancora 32 bit). 
+
+	const long KvelLong = 9782453; // Kvel << 15
+	long VelLong; // velocita' in long
+
+	VelLong = KvelLong*IcIndxTmp/IcPeriodTmp;
+	PID_MES = (VelLong);	// velocita' misurata in m/s (fractional)
+
+La costante e' stata calcolata moltiplicando il suo valore per 2^15. 
+I calcoli con gli interi sono molto piu' veloci e il risultato finale e' gia'
+moltiplicato per 2^15, e' quindi in fractional pronto per la routine PID.
+Questa ci mette circa 20us in totale.
+
+Eseguite in parallelo hanno mostrato una differenza nel risultato finale solo
+sull'ultimo bit.
+	
+[19d]
+PID 
+Microchip Code Example CE019
+Declare a PID Data Structure of type "tPID" named PIDstruct
+The data structure contains a pointer to derived coefficients in X-space and
+pointer to controler state (history) samples in Y-space. 
+So declare variables for the derived coefficients and the controller history
+samples:
+abcCoefficient[3]
+controlHistory[3]
+The abcCoefficients referenced by the PIDstruct data structure are derived
+from the gain coefficients, Kp, Ki and Kd
+So, declare Kp, Ki and Kd in an array
+kCoeffs[] = {0,0,0}
+
+[19e]
+Per trasformare una variabile fractional in una long si divide per 2^15.
+Per riportare il range dell'errore ( -1 +1) nel valore del PWM (0 -4096 in
+modalita' LAP) si moltiplica per 2^11, quindi:
+(fract >> 15)  << 11   ->  PWM = PID_OUT >> 4 + 2048
+
+[19f]
+L'accelerazione e la decelerazione del motore sono effettuate con una rampa di
+salita e di discesa per evitare eccessive sollecitazioni alle parti meccaniche
+e slittamenti delle ruote.
+La decelerazione e' piu' rapida dell'accelerazione per evitare di urtare
+eventuali ostacoli durante la frenata.
+Quando si imposta la nuova velocita' con il comando W, si deve tener conto
+dela velocita' attuale e della velocita' da raggiungere, queste possono essere
+entrambi positive o negative e la finale puo' essere maggiore (algebricamente)
+o minore della iniziale. Per questo occorre tener conto di tutte le possibili
+combinazioni:
+  if		 &&			   --->
+Vel Iniziale	Vel Finale 		Incremento Rampa	Test fine rampa
+>= 0			> Vel Iniz		+ Acc				if Vel Ist > Vel Fin
+>= 0			< Vel Iniz		- Dec				if Vel Ist < Vel Fin
+>= 0			> Vel Iniz		+ Dec				if Vel Ist > Vel Fin
+>= 0			> Vel Iniz		- Acc				if Vel Ist < Vel Fin
+
+L'incremento o decremento di velocita' e' effettuato ogni ciclo del PID (1ms)
+con un valore molto basso:
+con ACC = 0.00025 m ogni 1ms -> per andare da 0 a 0.5 m/s ci vogliono
+	2000ms -> Vel media = 0.25 m/s -> 50 cm
+con DEC = 0.0025 m ogni 1ms -> per andare da 0.5 a 0 m/s ci vogliono
+	200ms -> Vel media = 0.25 m/s -> 5 cm
+
+===============================================================================
+operazioni tra fractional
+K1 = Q15(0.07);
+K2 = Q15(0.2);
+K3 = ((long)(K1)<<15)/ K2;
+VelFloat=Fract2Float(K3);
+===============================================================================
+TABLE 7-1: INTERRUPT VECTORS - dsPIC30F DSCs (NON-SMPS)
+IRQ# 	Primary Name 		Alternate Name 			Vector Function
+N/A 	_ReservedTrap0 		_AltReservedTrap0 		Reserved
+N/A 	_OscillatorFail 	_AltOscillatorFail 		Oscillator fail trap
+N/A 	_AddressError 		_AltAddressError 		Address error trap
+N/A 	_StackError 		_AltStackError 			Stack error trap
+N/A 	_MathError 			_AltMathError 			Math error trap
+N/A 	_ReservedTrap5 		_AltReservedTrap5 		Reserved
+N/A 	_ReservedTrap6 		_AltReservedTrap6 		Reserved
+N/A 	_ReservedTrap7 		_AltReservedTrap7 		Reserved
+0 		_INT0Interrupt 		_AltINT0Interrupt 		INT0 External interrupt 0
+1 		_IC1Interrupt 		_AltIC1Interrupt 		IC1 Input capture 1
+2 		_OC1Interrupt 		_AltOC1Interrupt 		OC1 Output compare 1
+3 		_T1Interrupt 		_AltT1Interrupt 		TMR1 Timer 1 expired
+4 		_IC2Interrupt 		_AltIC2Interrupt 		IC2 Input capture 2
+5 		_OC2Interrupt 		_AltOC2Interrupt 		OC2 Output compare 2
+6 		_T2Interrupt 		_AltT2Interrupt 		TMR2 Timer 2 expired
+7 		_T3Interrupt 		_AltT3Interrupt 		TMR3 Timer 3 expired
+8 		_SPI1Interrupt 		_AltSPI1Interrupt 		SPI1 Ser. per. interface 1
+9 		_U1RXInterrupt 		_AltU1RXInterrupt 		UART1RX Uart 1 Receiver
+10 		_U1TXInterrupt 		_AltU1TXInterrupt 		UART1TX Uart 1 Transmitter
+11 		_ADCInterrupt 		_AltADCInterrupt 		ADC convert completed
+12 		_NVMInterrupt 		_AltNVMInterrupt 		NMM NVM write completed
+13 		_SI2CInterrupt 		_AltSI2CInterrupt 		Slave I2C™ interrupt
+14 		_MI2CInterrupt 		_AltMI2CInterrupt 		Master I2C™ interrupt
+15 		_CNInterrupt 		_AltCNInterrupt 		CN Input change interrupt
+16 		_INT1Interrupt 		_AltINT1Interrupt 		INT1 External interrupt 0
+17 		_IC7Interrupt 		_AltIC7Interrupt 		IC7 Input capture 7
+18 		_IC8Interrupt 		_AltIC8Interrupt 		IC8 Input capture 8
+19 		_OC3Interrupt 		_AltOC3Interrupt 		OC3 Output compare 3
+20 		_OC4Interrupt 		_AltOC4Interrupt 		OC4 Output compare 4
+21 		_T4Interrupt 		_AltT4Interrupt 		TMR4 Timer 4 expired
+22 		_T5Interrupt 		_AltT5Interrupt 		TMR5 Timer 5 expired
+23 		_INT2Interrupt 		_AltINT2Interrupt 		INT2 External interrupt 2
+24 		_U2RXInterrupt 		_AltU2RXInterrupt 		UART2RX Uart 2 Receiver
+25 		_U2TXInterrupt 		_AltU2TXInterrupt 		UART2TX Uart 2 Transmitter
+26 		_SPI2Interrupt 		_AltSPI2Interrupt 		SPI2 Ser. per. Interface 2
+27 		_C1Interrupt 		_AltC1Interrupt 		CAN1 combined IRQ
+28 		_IC3Interrupt 		_AltIC3Interrupt 		IC3 Input capture 3
+29 		_IC4Interrupt 		_AltIC4Interrupt 		IC4 Input capture 4
+30 		_IC5Interrupt 		_AltIC5Interrupt 		IC5 Input capture 5
+31 		_IC6Interrupt 		_AltIC6Interrupt 		IC6 Input capture 6
+32 		_OC5Interrupt 		_AltOC5Interrupt 		OC5 Output compare 5
+33 		_OC6Interrupt 		_AltOC6Interrupt 		OC6 Output compare 6
+34 		_OC7Interrupt 		_AltOC7Interrupt 		OC7 Output compare 7
+35 		_OC8Interrupt 		_AltOC8Interrupt 		OC8 Output compare 8
+36 		_INT3Interrupt 		_AltINT3Interrupt 		INT3 External interrupt 3
+37 		_INT4Interrupt 		_AltINT4Interrupt 		INT4 External interrupt 4
+38 		_C2Interrupt 		_AltC2Interrupt 		CAN2 combined IRQ
+39 		_PWMInterrupt 		_AltPWMInterrupt 		PWM period match
+40 		_QEIInterrupt 		_AltQEIInterrupt 		QEI position count. compare
+41 		_DCIInterrupt 		_AltDCIInterrupt 		DCI CODEC tranfer completed
+42 		_LVDInterrupt 		_AltLVDInterrupt 		PLVD low voltage detected
+43 		_FLTAInterrupt 		_AltFLTAInterrupt 		FLTA MCPWM fault A
+44 		_FLTBInterrupt 		_AltFLTBInterrupt 		FLTB MCPWM fault B
