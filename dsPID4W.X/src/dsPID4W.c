@@ -931,7 +931,7 @@ void _ISR_PSV _T1Interrupt(void)
 
     _T1IF = 0; // interrupt flag reset
     Blink++; // heartbeat LED blink
-
+    
 // cycle 0 actions
     // <editor-fold defaultstate="collapsed" desc="Speed and PID procedures">
     /**
