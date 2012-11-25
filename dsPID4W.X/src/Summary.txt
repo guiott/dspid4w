@@ -1,0 +1,125 @@
+/**
+\page summary.txt Summary
+
+This is a porting on a single dsPIC33FJ64MC802 of previous double PID Motor Control (dsPID program) formerly performed with two dsPIC30F4012 plus odometry and field mapping formerly performed with a single dsPIC30F3013 (dsODO).
+
+Some descriptions my STILL refer to the old project
+
+-------------------------------------------------------------------------------
+
+dsNavCon33 board is designed with one dsPIC33FJ64MC802 to both control the motors and perform navigation.
+
+The MC can be replaced with any other MC type dsPIC33 with minor changes on SW.
+
+It estimates the position through odometry, maps the field and exchanges that values with the main controller board via other communication buses. 
+
+Telemetry with the remote computer is achieved with a Zigbee RF modem through the secondary UART interface.
+
+Configure Oscillator to operate the device at 40 Mhz
+- PLLFBD=30  M=32
+- Fin  = 10 MHz
+- Fosc = Fin*M/(N1*N2) = 10M*32(2*2) = 80 Mhz
+- Fcy  = Fosc/2 = 40 MHz
+- Tcy  = 25 ns
+- with 10MHz oscillator, set MPLAB SIM to 80.0000 MHz
+		
+
+Configure Oscillator to operate the device at 39,6288 Mhz
+- PLLFBD=41  M=43
+- Fin  = 7,3728 MHz
+- Fosc = Fin*M/(N1*N2) = 7.3728M*43(2*2) = 79,2576Mhz
+- Fcy  = Fosc/2 = 39,6288 MHz
+- Tcy  = 25,234173 ns
+- with 7.3728MHz oscillator, set MPLAB SIM to 79.2576 MHz
+
+
+The program is full interrupt driven.
+When initialization starts, the program enters in a very simple Main loop, acting as a state machine. Here it checks some flags enabled by external events and enters in the relative state. 
+Since it's a kind of a very simple cooperative "Real Time Operative System", every routine has to be executed in the shortest possible time, freeing the system up to take care of the very frequent interrupts.
+
+============================
+A list of peripherals used:
+
+I/O pins used on dsPIC33FJ64MC802
+- 01 - MCLR
+- 02 - AN0 current sensing 1 (Vref+ = Avdd = 3.3V)				[2]
+- 03 - AN1 current sensing 2 (Vref+ = Avdd = 3.3V)				[2]
+- 04 - PGD1/EMUD1
+- 05 - PGC1/EMUC1
+- 06 - RB2 H-bridge1 enable										[11]
+- 07 - RB3 H-bridge2 enable										[11]
+- 08 - Vss
+- 09 - OSC1
+- 10 - OSC2
+- 11 - TX2	    											RP4	[6]
+- 12 - RA4 LED1 (470 Ohm = 3mA)
+- 13 - Vdd
+- 14 - QEB1													RP5	[4]
+- 15 - QEA1/IC1 (both peripherals mapped on the same pin)	RP6	[4]	[7] 
+- 16 - RX2													RP7	[6]
+- 17 - RX1													RP8	[6]
+- 18 - TX1													RP9	[6]
+- 19 - Vss
+- 20 - Vcap
+- 21 - QEA2/IC2 (both peripherals mapped on the same pin)	RP10 [4] [7]
+- 22 - QEB2													RP11 [4]
+- 23 - PWM1H2													[11]
+- 24 - PWM1L2													[11]													
+- 25 - PWM1H1													[11]
+- 26 - PWM1L1													[11]
+- 27 - Avss
+- 28 - Avdd
+
+*******************************************************************************
+
+I/O pins used on dsPIC33FJ64MC804
+
+- 01 - SDA1
+- 02 - QEB1													RP22 [4]
+- 03 - QEA1/IC1 (both peripherals mapped on the same pin)	RP23 [4] [7]
+- 04 - QEB2													RP24 [4]
+- 05 - QEA2/IC2 (both peripherals mapped on the same pin)	RP25 [4] [7]
+- 06 - Vss
+- 07 - Vcap
+08 - PWM1H3/RP10/RB10
+09 - PWM1L3/RP11/RB11
+- 10 - PWM1H2 (IN2_B)										  	[11]
+- 11 - PWM1L2 (IN1_B)											[11]
+- 12 - RA10 H-bridge2 enable									[11]
+- 13 - RA7 H-bridge1 enable										[11]
+- 14 - PWM1H1 (IN2_A)											[11]
+- 15 - PWM1L1 (IN1_A)											[11] 
+- 16 - Avss																
+- 17 - Avdd
+- 18 - MCLR
+- 19 - AN0 current sensing 1 (Vref+ = Avdd = 3.3V)				[2]
+- 20 - AN1 current sensing 2 (Vref+ = Avdd = 3.3V)				[2]
+- 21 - PGD1/EMUD1
+- 22 - PGC1/EMUC1
+23 - AN4
+24 - AN5
+25 - AN6
+26 - AN7
+27 - AN8
+- 28 - Vdd
+- 29 - Vss
+- 30 - OSC1
+- 31 - OSC2
+- 32 - RA8 LED1 (470 Ohm = 3mA)
+33 - RP4/RB4
+34 - RA4
+35 - RA9
+36 - RP19/RC3
+- 37 - RX2													RP20[6]
+- 38 - TX2	    											RP21[6]
+- 39 - Vss
+- 40 - Vdd
+- 41 - RX1													RP5	[6]
+- 42 - TX1													RP6	[6]
+43 - INT0/RP7/RB7
+- 44 - SCL1
+
+
+
+*******************************************************************************
+*/

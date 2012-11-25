@@ -1,0 +1,188 @@
+/** CHANGELOG.TXT
+
+*\page changelog.txt Changelog
+
+This is a porting on a single dsPIC33FJ64MC802 of previous double PID Motor 
+Control (dsPID) formerly performed with two dsPIC30F4012 plus odometry and 
+field mapping formerly performed with a single dsPIC30F3013 (dsODO).
+So the version numbering of this program starts with 2.0, following dsPID and 
+dsODO versions.
+
+===============================================================================
+
+ dsPID33 Version History 
+
+2.2.6 - december 2011
+- the comments are going to be optimized in order to be compatible with Doxygen
+sintax
+
+2.2.5 - july 2011
+- the procedure to compute the repulsive force field of the obstacles has been 
+optimized
+
+2.2.4 - august 2010
+- added transmission of sensors raw data toward console (command Q) this 
+function is implemented on dsNavConsole starting from ver.1.6.1
+
+2.2.3 - june 2010
+- field mapping (SLAM) procedures debugged and tested also with 
+dsNavConsole 1.5.0
+
+2.2.2 - march 2010
+
+- found a bug in AnglePID that cumulates a very small amount of error in history 
+(integral part of the PID) at every orientation assignment
+- this version is compatible with: version 1.4.0  telemetry console, dsNavConsole 
+Processing sketch version 1.3.0  Arduino SensorBoard sketch
+- this is a stable version that performs UMBmark test as shown in:
+	http://www.guiott.com/Rino/RinoUMBmark/RinoUMBmark.htm
+
+2.2.1 - february 2010
+- some minor bugs fixed
+- it can now be compiled to run on prototype board, Droids 990.011 dsNav board, 
+prototype board with 44pins smd dsPIC or Katodo Robocontroller
+- first version that participated to RTC real test in Von Neumann gymnasyum
+- most of the time spent on mechanical parameters calibration via UMBmark
+
+2.2.0 - november 2009
+- some bugs fixed
+- added compass bearing reading from sensors board
+- first version for 990.011 Droids board
+
+2.1.5 - june 2009
+- start writing of double version for both 28 pin and 44 pin dsPIC series
+
+2.1.3 - may 2009
+- Obstacle avoidance code written, yet to test
+- Start writing of parameters storage in flash memory
+
+2.1.1 - december 2008
+- UART2 communication complete. Sensor board sends obstacles and target data to 
+dsNavCon board.
+- Starting development of obstacle avoidance strategies
+
+2.1.0 is a stable version with basic movement functions, useful for demos
+
+2.1.0 - december 2008
+- Written an article about Rino, dsNavCon and dsNavCon33, to be published on 
+Circuit Cellar #224-225
+- Sensor Board designed, developed and programmed. This board, wrapped around 
+an Arduino board, controls 3 x SRF08 ultrasound range finders, 3 x GP2D120 
+Sharp infrared sensors, 3 x optical switch bumpers, 3 x light sensors, 2 x Figaro
+TGS822 gas sensors. This board sends environment infos (obstacle and targets) via
+serial communication, in order to allow dsNavCon33 to navigate, for both RTC or 
+Explorer senior contests.
+- Starting of development for UART2 communication with SensorBoard.
+
+2.0.3	- august 2008
+-porting almost completed with some bug fixes and improvements 
+-DMA used for TX simplifies even more the program development and reduces a lot 
+the effort of the DSC.
+
+2.0.4	- october 2008
+- full debug on HW done
+- PID parameters almost OK, it walks and turns regularly with a good measured 
+precision
+- developed Scheduler procedure
+
+2.0.2	- july 2008
+- start porting of dsODO part of the project too on a single chip.
+- In order to have enough RAM for field mapping, now a dsPIC33FJ64MC802 is used.
+- Both speed PIDs are executed every 1ms. Orientation PID every 10ms, distance 
+PID every 50ms.
+- Even if all of the three PIDs are executed in un cycle, it requires less then 
+400us overall.
+- everything is a lot simplified without the need of high speed communications 
+between separated MCs and Supervisor.
+
+2.0.1	- july 2008
+- both MCs ported. It requires 5.7us to perform both PIDs, 5.37us without ramp.
+- With speed calculation (Vel1 = Kvel1*IcIndxTmp/IcPeriodTmp) it requires 26.4us 
+To perform just the PID library function 0.825us
+
+2.0.0 	- may 2008
+- porting of both MC parts of the project on one dsPIC33FJ32MC302 with two QEI 
+interfaces
+
+===============================================================================
+
+ dsPID Version History
+
+1.0 - december 2007
+
+0.9 - december 2007
+- First real steps of the boy! The bot travels on a straight line at any speed, 
+responding to remote commands. Is it possible to control the speed of both 
+wheels obtaining any kind of trajectories.
+- As calculated theoretically, the movement is smooth and controlled between 
+0.025 and 0.5 m/s. Below that minimum the control is noisy with irregular 
+rotation of the wheels, even if the bot still go straight. Above the maximum 
+speed of 0.5 m/s the movement may become uncontrolled since the PID has no more 
+margins of controls to compensate variations of load or power supply.
+- The maximum uncontrolled speed, with a full charged battery pack is about 
+0.6 m/s.
+
+0.8	- november 2007
+- Some bugs fixing
+- Implemented circular queue for communication procedures to obtain a best 
+separation between second and third communication layer 
+- Augmented robustness of the communication protocol 
+
+0.2	- october 5th 2007
+- Second sending to Circuit Cellar Contest Administrator.
+
+0.1	- september 20th 2007
+- First project sent to Circuit Cellar Contest Administrator
+
+0.0 - august 7th 2007
+- registration of the project to Circuit Cellar Contest with number MT2155
+
+--	- Startup may 2007
+
+===============================================================================
+
+dsODO Version History 
+
+
+1.0 - march 2008
+- Updated telemetry with a completely new interface on PC written with 
+Processing.
+
+- The new GUI allows the live modification of all the PID and mechanical 
+constants. Added some new commands parsing from telemetry.
+- Added parameters storing on EEPROM.
+- Added PID for rotation angle and for distance.
+
+0.9 - december 2007
+- First real steps of the boy! The bot travels on a straight line at any speed, 
+responding to remote commands. Is it possible to control the speed of both wheels 
+obtaining any kind of trajectories.
+- As calculated theoretically, the movement is smooth and controlled between 
+0.025 and 0.5 m/s. Below that minimum the control is noisy with irregular 
+rotation of the wheels, even if the bot still go straight. Above the maximum 
+speed of 0.5 m/s the movement may become uncontrolled since the PID has no more 
+margins of controls to compensate variations of load or power supply.
+- The maximum uncontrolled speed, with a full charged battery pack is 
+about 0.6 m/s.
+- Tested and debugged dead-reckoning procedure including telemetry of position.
+
+0.8	- november 2007
+- Some bugs fixing
+- Implemented circular queue for communication procedures to obtain a best 
+separation between second and third communication layer 
+- Augmented robustness of the communication protocol 
+
+0.2	- october 2007
+- Second sending to Circuit Cellar Contest Administrator.
+- Added procedures for Dead Reckoning
+
+0.1	- september 2007
+- First project sent to Circuit Cellar Contest Administrator
+
+0.0 - august 7th 2007
+- registration of the project to Circuit Cellar Contest with number MT2155
+
+--	- Startup july 2007
+
+=============================================================================*/
+
