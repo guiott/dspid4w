@@ -1108,6 +1108,11 @@ void _ISR_PSV _IC1Interrupt(void)
 *\ref _7 "details [7]"
 */
 
+
+    TEST ^= 1; // ??????????????debug
+
+
+
     _IC1IF = 0; // interrupt flag reset
     Ic1CurrPeriod = IC1BUF;
     if (Tmr2OvflwCount1 == 0) // TMR2 overflowed?
@@ -1131,6 +1136,11 @@ void _ISR_PSV _IC1Interrupt(void)
     {
         Ic1Indx--;
     }
+
+
+        TEST ^= 1; // ??????????????debug
+
+
 }
 
 void _ISR_PSV _IC2Interrupt(void)
