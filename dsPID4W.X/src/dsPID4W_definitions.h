@@ -197,11 +197,19 @@ long KvelMode[4][2]; // constants K_VEL << 15 [19c]
 // see also http://www.guiott.com/Lino/Speed/DynamicIC.htm
 long Kvel[2];        // K_VEL << 15
 //ICM<2:0>:Input Capture Mode Select bits
+/*
+    IC_MODE0 0b001 // 2X mode
+    IC_MODE1 0b011 // 1X mode
+    IC_MODE2 0b100 // 1/4X mode
+    IC_MODE3 0b101 // 1/16X mode
+*/
+const int IcMode[4] = {0b001, 0b011, 0b100, 0b101};
+
+//ICM<2:0>:Input Capture Mode Select bits
 #define IC_MODE0 0b001 // 2X mode
 #define IC_MODE1 0b011 // 1X mode
 #define IC_MODE2 0b100 // 1/4X mode
 #define IC_MODE3 0b101 // 1/16X mode
-
 
 #define MIN1 3088  // VelLong @ 15 RPM
 #define MAX1 5147  // VelLong @ 25 RPM

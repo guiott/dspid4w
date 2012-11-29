@@ -610,61 +610,54 @@ void Speed(void)
     // end Manage ramp
     // </editor-fold>
 
-    // <editor-fold defaultstate="collapsed" desc="Select the IC prescaler[7c]">
+    SelectIcPrescaler();
+}
+
+void SelectIcPrescaler(void)
+{/**
+*\brief Select the correct Input Capture prescaler
+
+*/
     switch (IC1CONbits.ICM)
     {
         case IC_MODE0:
             if (Vel[R] >= MAX1)
             {
-                IC1CONbits.ICM = 0; // turn off
-                Kvel[R] = KvelMode[1][R];
-                IC1CONbits.ICM = IC_MODE1;
+                SwitchIcPrescaler(1,R);
             }
             break;
 
         case IC_MODE1:
             if (Vel[R] < MIN1)
             {
-                IC1CONbits.ICM = 0; // turn off
-                Kvel[R] = KvelMode[0][R];
-                IC1CONbits.ICM = IC_MODE0;
+                SwitchIcPrescaler(0,R);
             }
             else if (Vel[R] >= MAX2)
             {
-                IC1CONbits.ICM = 0; // turn off
-                Kvel[R] = KvelMode[2][R];
-                IC1CONbits.ICM = IC_MODE2;
+                SwitchIcPrescaler(2,R);
             }
             break;
 
         case IC_MODE2:
             if (Vel[R] < MIN2)
             {
-                IC1CONbits.ICM = 0; // turn off
-                Kvel[R] = KvelMode[1][R];
-                IC1CONbits.ICM = IC_MODE1;
+                SwitchIcPrescaler(1,R);
             }
             else if (Vel[R] >= MAX3)
             {
-                IC1CONbits.ICM = 0; // turn off
-                Kvel[R] = KvelMode[3][R];
-                IC1CONbits.ICM = IC_MODE3;
+                SwitchIcPrescaler(3,R);
             }
             break;
 
         case IC_MODE3:
             if (Vel[R] < MIN3)
             {
-                IC1CONbits.ICM = 0; // turn off
-                Kvel[R] = KvelMode[2][R];
-                IC1CONbits.ICM = IC_MODE2;
+                SwitchIcPrescaler(2,R);
             }
             break;
 
         default:
-            IC1CONbits.ICM = 0; // turn off
-            Kvel[R] = KvelMode[0][R];
-            IC1CONbits.ICM = IC_MODE0;
+                SwitchIcPrescaler(0,R);
             break;
     }
 
@@ -673,59 +666,74 @@ void Speed(void)
         case IC_MODE0:
             if (Vel[L] >= MAX1)
             {
-                IC2CONbits.ICM = 0; // turn off
-                Kvel[L] = KvelMode[1][L];
-                IC2CONbits.ICM = IC_MODE1;
+                SwitchIcPrescaler(1,L);
             }
             break;
 
         case IC_MODE1:
             if (Vel[L] < MIN1)
             {
-                IC2CONbits.ICM = 0; // turn off
-                Kvel[L] = KvelMode[0][L];
-                IC2CONbits.ICM = IC_MODE0;
+                SwitchIcPrescaler(0,L);
             }
             else if (Vel[L] >= MAX2)
             {
-                IC2CONbits.ICM = 0; // turn off
-                Kvel[L] = KvelMode[2][L];
-                IC2CONbits.ICM = IC_MODE2;
+                SwitchIcPrescaler(2,L);
             }
             break;
 
         case IC_MODE2:
             if (Vel[L] < MIN2)
             {
-                IC2CONbits.ICM = 0; // turn off
-                Kvel[L] = KvelMode[1][L];
-                IC2CONbits.ICM = IC_MODE1;
+                SwitchIcPrescaler(1,L);
             }
             else if (Vel[L] >= MAX3)
             {
-                IC2CONbits.ICM = 0; // turn off
-                Kvel[L] = KvelMode[3][L];
-                IC2CONbits.ICM = IC_MODE3;
+                SwitchIcPrescaler(3,L);
             }
             break;
 
         case IC_MODE3:
             if (Vel[L] < MIN3)
             {
-                IC2CONbits.ICM = 0; // turn off
-                Kvel[L] = KvelMode[2][L];
-                IC2CONbits.ICM = IC_MODE2;
+                SwitchIcPrescaler(2,L);
             }
             break;
 
         default:
-            IC2CONbits.ICM = 0; // turn off
-            Kvel[L] = KvelMode[0][L];
-            IC2CONbits.ICM = IC_MODE0;
+                SwitchIcPrescaler(0,L);
             break;
     }
-    // end Select the IC prescaler[7c]
-    // </editor-fold>
+}
+
+
+void SwitchIcPrescaler(int Mode, int RL)
+{/**
+*\brief Safely switch to the new Input Capture prescaler
+
+*/
+    __builtin_disi(0x3FFF); //disable interrupts up to priority 6 for n cycles
+    
+// here is the assignment of the ICx module to the correct wheel
+    if (RL == R)
+    {
+        IC1CONbits.ICM = 0; // turn off prescaler
+        Ic1Indx = 0; // reset IC1 interrupt count
+        Ic1CurrPeriod = 0;
+        IC1CONbits.ICM = IcMode[Mode];
+        _IC1IF = 0;  // interrupt flag reset
+    }
+    else
+    {
+        IC2CONbits.ICM = 0; // turn off prescaler
+        Ic2Indx = 0; // reset IC2 interrupt count
+        Ic2CurrPeriod = 0;
+        IC2CONbits.ICM = IcMode[Mode];
+        _IC2IF = 0;  // interrupt flag reset
+    }
+
+    Kvel[RL] = KvelMode[Mode][RL];
+
+    DISICNT = 0; //re-enable interrupts
 }
 
 void DeadReckoning(void)
@@ -1108,11 +1116,6 @@ void _ISR_PSV _IC1Interrupt(void)
 *\ref _7 "details [7]"
 */
 
-
-    TEST ^= 1; // ??????????????debug
-
-
-
     _IC1IF = 0; // interrupt flag reset
     Ic1CurrPeriod = IC1BUF;
     if (Tmr2OvflwCount1 == 0) // TMR2 overflowed?
@@ -1136,10 +1139,6 @@ void _ISR_PSV _IC1Interrupt(void)
     {
         Ic1Indx--;
     }
-
-
-        TEST ^= 1; // ??????????????debug
-
 
 }
 

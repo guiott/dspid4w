@@ -1,7 +1,8 @@
 /* ///////////////////////////////////////////////////////////////////////// */
 /* Included	in "dsPid_definitions.h", it contains functions prototypes / */
 /* ///////////////////////////////////////////////////////////////////////// */
-
+void SelectIcPrescaler(void);
+void SwitchIcPrescaler(int Mode, int RL);
 void ConstantsDefault (void);
 void PidCalc (void);
 void PidLCalc (void);
