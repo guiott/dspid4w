@@ -277,7 +277,7 @@ fractional PidRef[2]= {0,0};            // speed before normalization for PID
 //#define ACC 0.00025			// acceleration
 //#define DEC 0.0005			// deceleration
 fractional Acc=Q15(0.0005);		// acceleration
-fractional Dec=Q15(0.005);               // deceleration
+fractional Dec=Q15(0.005);              // deceleration
 
 #define PID_CYCLE_MULT 10               // for slow speed calculation
 int Curr[2] = {0,0};			// motor current

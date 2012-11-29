@@ -191,6 +191,367 @@ Nop(); // end of idle cycle [25a]
 /* Functions                                                                 */
 /*===========================================================================*/
 
+void DeadReckoning(void)
+{/**
+*\brief Odometry & dead reckoning
+
+The coordinates of the current position of the robot is achieved with an
+algorithm elaborated starting from G.W. Lucas' paper "A Tutorial and Elementary
+Trajectory Model for the Differential Steering System of Robot Wheel Actuators"
+available on Internet:
+ http://rossum.sourceforge.net/papers/DiffSteer/DiffSteer.html
+
+*\ref _22 "details [22]"
+*/
+
+    float CosNow; // current value for Cos
+    float SinNow; // current value for Sin
+    float DSpace; // delta traveled distance by the robot
+    float DTheta; // delta rotation angle
+    float DPosX; // delta space on X axis
+    float DPosY; // delta space on Y axis
+    float SaMinusSb;
+    float SrPlusSl;
+    float Radius;
+
+    CYCLE1_FLAG = 0;
+
+    Spmm[R] = SpTick[R] * Ksp[R]; // distance of right wheel in mm
+    SpTick[R] = 0; // reset counter for the next misure
+    Spmm[L] = SpTick[L] * Ksp[L]; // distance of left wheel in mm
+    SpTick[L] = 0; // reset counter for the next misure
+
+#ifdef geographic			// [22aa]
+    SaMinusSb = Spmm[L] - Spmm[R];
+#else
+    SaMinusSb = Spmm[R] - Spmm[L];
+#endif
+
+    SrPlusSl = Spmm[R] + Spmm[L];
+    if (fabs(SaMinusSb) <= SPMIN)
+    {// traveling in a nearly straight line [22a]
+        DSpace = Spmm[R];
+
+#ifdef geographic			// [22aa]
+        DPosX = DSpace*SinPrev;
+        DPosY = DSpace*CosPrev;
+#else
+        DPosX = DSpace*CosPrev;
+        DPosY = DSpace*SinPrev;
+#endif
+
+    }
+    else if (fabs(SrPlusSl) <= SPMIN)
+    {// pivoting around vertical axis without translation [22a]
+        DTheta = SaMinusSb / Axle;
+        ThetaMes = fmodf((ThetaMes + DTheta), TWOPI);//current orient. 2PI range
+        CosPrev = cosf(ThetaMes); // for the next cycle
+        SinPrev = sinf(ThetaMes);
+        DPosX = 0;
+        DPosY = 0;
+        DSpace = 0;
+    }
+    else
+    {// rounding a curve
+        DTheta = SaMinusSb / Axle;
+        ThetaMes = fmodf((ThetaMes + DTheta), TWOPI);//current orient .2PI range
+        CosNow = cosf(ThetaMes);
+        SinNow = sinf(ThetaMes);
+        DSpace = SrPlusSl / 2;
+        Radius = (SemiAxle)*(SrPlusSl / SaMinusSb);
+
+#ifdef geographic			// [22aa]
+        DPosX = Radius * (CosPrev - CosNow);
+        DPosY = Radius * (SinNow - SinPrev);
+#else
+        DPosX = Radius * (SinNow - SinPrev);
+        DPosY = Radius * (CosPrev - CosNow);
+#endif
+
+        CosPrev = CosNow; // to avoid re-calculation on the next cycle
+        SinPrev = SinNow;
+    }
+
+    Space += DSpace; // total traveled distance
+
+    Orientation(); // position coordinates computed, Angle PID can start [23]
+}
+
+void Orientation(void)
+{/**
+*\brief Angle PID.
+PID procedure to maintain the desired orientation.
+
+*\ref _23 "details [23]"
+*/
+
+    int DeltaVel; // difference in speed between the wheels to rotate
+    int RealVel; // VelDesM after reduction controlled by Dist PID
+    float Error;
+
+    if (ThetaDes < 0) ThetaDes += TWOPI; // keep angle value positive
+    if (ThetaMes < 0) ThetaMes += TWOPI;
+    Error = ThetaMes - ThetaDes;
+    if (Error > PI) // search for the best direction to correct error [23a]
+    {
+        Error -= TWOPI;
+    }
+    else if (Error < -PI)
+    {
+        Error += TWOPI;
+    }
+
+    ANGLE_PID_DES = 0; // ref value translated to 0 [23c]
+    ANGLE_PID_MES = Q15(Error / PI); // current error [23b]
+    PID(&AnglePIDstruct);
+
+    DeltaVel = (ANGLE_PID_OUT >> 7); // MAX delta in int = 256 [23d]
+    RealVel = VelDesM * VelDecr; // [24d]
+    VelDes[R] = RealVel - DeltaVel; // [23e]
+    VelDes[L] = RealVel + DeltaVel;
+
+    Speed(); // set the rotation speed for each wheel
+}
+
+void Speed(void)
+{/**
+*\brief Manage the acc/deceleration ramp and speed control to start Speed PID.
+*/
+
+    /*
+      if (VelDes[R] > MAX_ROT_SPEED)
+      {
+        VelDes[R] = MAX_ROT_SPEED;
+        VelDes[L] = MAX_ROT_SPEED + (DeltaVel << 1);
+      }
+      else if (VelDes[R] < -MAX_ROT_SPEED)
+      {
+        VelDes[R] = -MAX_ROT_SPEED;
+        VelDes[L] = -MAX_ROT_SPEED + (DeltaVel << 1);
+      }
+      else if (VelDes[L] > MAX_ROT_SPEED)
+      {
+        VelDes[L] = MAX_ROT_SPEED;
+        VelDes[R] = MAX_ROT_SPEED - (DeltaVel << 1);
+      }
+      else if (VelDes[L] < -MAX_ROT_SPEED)
+      {
+        VelDes[L] = -MAX_ROT_SPEED;
+        VelDes[R] = -MAX_ROT_SPEED - (DeltaVel << 1);
+      }
+    */
+
+    VelFin[R] = Vel2Fract(VelDes[R]);
+    VelFin[L] = Vel2Fract(VelDes[L]);
+
+    // <editor-fold defaultstate="collapsed" desc="Manage ramp">
+    if (VelFin[R] != PidRef[R])
+    {
+        if (VelFin[R] > PidRef[R])
+        {
+          if(PidRef[R] >= 0)
+          {
+            PidRef[R] += Acc;
+          }
+          else
+          {
+            PidRef[R] += Dec;
+          }
+
+          if (PidRef[R] >= VelFin[R])
+          {
+            PidRef[R] = VelFin[R];// acceleration is over
+          }
+        }
+        else
+        {
+          if (PidRef[R] >= 0)
+          {
+            PidRef[R] -= Dec;
+          }
+          else
+          {
+            PidRef[R] -= Acc;
+          }
+
+          if (PidRef[R] <= VelFin[R])
+          {
+            PidRef[R] = VelFin[R];// acceleration is over
+          }
+        }
+    }
+
+    if (VelFin[L] != PidRef[L])
+    {
+        if (VelFin[L] > PidRef[L])
+        {
+          if(PidRef[L] >= 0)
+          {
+            PidRef[L] += Acc;
+          }
+          else
+          {
+            PidRef[L] += Dec;
+          }
+
+          if (PidRef[L] >= VelFin[L])
+          {
+            PidRef[L] = VelFin[L];// acceleration is over
+          }
+        }
+        else
+        {
+          if (PidRef[L] >= 0)
+          {
+            PidRef[L] -= Dec;
+          }
+          else
+          {
+            PidRef[L] -= Acc;
+          }
+
+          if (PidRef[L] <= VelFin[L])
+          {
+            PidRef[L] = VelFin[L];// acceleration is over
+          }
+        }
+    }
+
+    // end Manage ramp
+    // </editor-fold>
+
+    SelectIcPrescaler();
+}
+
+void SelectIcPrescaler(void)
+{/**
+*\brief Select the correct Input Capture prescaler
+
+*/
+    switch (IC1CONbits.ICM)
+    {
+        case IC_MODE0:
+            if (Vel[R] >= MAX1)
+            {
+                SwitchIcPrescaler(1,R);
+            }
+            break;
+
+        case IC_MODE1:
+            if (Vel[R] < MIN1)
+            {
+                SwitchIcPrescaler(0,R);
+            }
+            else if (Vel[R] >= MAX2)
+            {
+                SwitchIcPrescaler(2,R);
+            }
+            break;
+
+        case IC_MODE2:
+            if (Vel[R] < MIN2)
+            {
+                SwitchIcPrescaler(1,R);
+            }
+            else if (Vel[R] >= MAX3)
+            {
+                SwitchIcPrescaler(3,R);
+            }
+            break;
+
+        case IC_MODE3:
+            if (Vel[R] < MIN3)
+            {
+                SwitchIcPrescaler(2,R);
+            }
+            break;
+
+        default:
+                SwitchIcPrescaler(0,R);
+            break;
+    }
+
+    switch (IC2CONbits.ICM)
+    {
+        case IC_MODE0:
+            if (Vel[L] >= MAX1)
+            {
+                SwitchIcPrescaler(1,L);
+            }
+            break;
+
+        case IC_MODE1:
+            if (Vel[L] < MIN1)
+            {
+                SwitchIcPrescaler(0,L);
+            }
+            else if (Vel[L] >= MAX2)
+            {
+                SwitchIcPrescaler(2,L);
+            }
+            break;
+
+        case IC_MODE2:
+            if (Vel[L] < MIN2)
+            {
+                SwitchIcPrescaler(1,L);
+            }
+            else if (Vel[L] >= MAX3)
+            {
+                SwitchIcPrescaler(3,L);
+            }
+            break;
+
+        case IC_MODE3:
+            if (Vel[L] < MIN3)
+            {
+                SwitchIcPrescaler(2,L);
+            }
+            break;
+
+        default:
+                SwitchIcPrescaler(0,L);
+            break;
+    }
+}
+
+void SwitchIcPrescaler(int Mode, int RL)
+{/**
+*\brief Safely switch to the new Input Capture prescaler
+
+*/
+    __builtin_disi(0x3FFF); //disable interrupts up to priority 6 for n cycles
+
+// here is the assignment of the ICx module to the correct wheel
+    if (RL == R)
+    {
+        IC1CONbits.ICM = 0; // turn off prescaler
+        Ic1Indx = 0; // reset IC1 interrupt count
+        Ic1CurrPeriod = 0;
+        IC1CONbits.ICM = IcMode[Mode];
+        _IC1IF = 0;  // interrupt flag reset
+    }
+    else
+    {
+        IC2CONbits.ICM = 0; // turn off prescaler
+        Ic2Indx = 0; // reset IC2 interrupt count
+        Ic2CurrPeriod = 0;
+        IC2CONbits.ICM = IcMode[Mode];
+        _IC2IF = 0;  // interrupt flag reset
+    }
+
+    Kvel[RL] = KvelMode[Mode][RL];
+
+    DISICNT = 0; //re-enable interrupts
+}
+
+fractional Vel2Fract(int Vel2Conv)
+{/**
+*\brief Convert speed value in Q15 format normalized to 2m/s
+*/
+    return Q15((float) (Vel2Conv) / 2000); //normalized to 2m/s[23f]
+}
+
 void ThetaDesF(float Angle)
 {/** 
 *\brief Starts the AnglePID in order to point ot the desired Angle
@@ -447,380 +808,9 @@ void AdcCalc(void)
     }
 }
 
-void InitAnglePid(void)
-{/**
-*\brief Initialize the PID data structure: PIDstruct.
-Use the Microchip C30 PID library according to the Microchip Code Example CE019
-		
-*\ref _19d "details [19d]"
-*/
-
-    //Initialize the PID data structure: PIDstruct
-    //Set up pointer to derived coefficients
-    AnglePIDstruct.abcCoefficients = &AngleabcCoefficient[0];
-    //Set up pointer to controller history samples
-    AnglePIDstruct.controlHistory = &AnglecontrolHistory[0];
-    // Clear the controler history and the controller output
-    PIDInit(&AnglePIDstruct);
-    //Derive the a,b, & c coefficients from the Kp, Ki & Kd
-    PIDCoeffCalc(&AngleKCoeffs[0], &AnglePIDstruct);
-}
-
-void Orientation(void)
-{/**
-*\brief Angle PID. 
-PID procedure to maintain the desired orientation.
-
-*\ref _23 "details [23]"
-*/
-
-    int DeltaVel; // difference in speed between the wheels to rotate
-    int RealVel; // VelDesM after reduction controlled by Dist PID
-    float Error;
-
-    if (ThetaDes < 0) ThetaDes += TWOPI; // keep angle value positive
-    if (ThetaMes < 0) ThetaMes += TWOPI;
-    Error = ThetaMes - ThetaDes;
-    if (Error > PI) // search for the best direction to correct error [23a]
-    {
-        Error -= TWOPI;
-    }
-    else if (Error < -PI)
-    {
-        Error += TWOPI;
-    }
-
-    ANGLE_PID_DES = 0; // ref value translated to 0 [23c]
-    ANGLE_PID_MES = Q15(Error / PI); // current error [23b]
-    PID(&AnglePIDstruct);
-
-    DeltaVel = (ANGLE_PID_OUT >> 7); // MAX delta in int = 256 [23d]
-    RealVel = VelDesM * VelDecr; // [24d]
-    VelDes[R] = RealVel - DeltaVel; // [23e]
-    VelDes[L] = RealVel + DeltaVel;
-
-    Speed(); // set the rotation speed for each wheel
-}
-
-void Speed(void)
-{/**
-*\brief Manage the acc/deceleration ramp and speed control to start Speed PID.
-*/
-
-    /* 
-      if (VelDes[R] > MAX_ROT_SPEED)
-      {
-        VelDes[R] = MAX_ROT_SPEED;
-        VelDes[L] = MAX_ROT_SPEED + (DeltaVel << 1);
-      }
-      else if (VelDes[R] < -MAX_ROT_SPEED)
-      {
-        VelDes[R] = -MAX_ROT_SPEED;
-        VelDes[L] = -MAX_ROT_SPEED + (DeltaVel << 1);
-      }
-      else if (VelDes[L] > MAX_ROT_SPEED)
-      {
-        VelDes[L] = MAX_ROT_SPEED;
-        VelDes[R] = MAX_ROT_SPEED - (DeltaVel << 1);
-      }
-      else if (VelDes[L] < -MAX_ROT_SPEED)
-      {
-        VelDes[L] = -MAX_ROT_SPEED;
-        VelDes[R] = -MAX_ROT_SPEED - (DeltaVel << 1);
-      }
-    */
-
-    VelFin[R] = Q15((float) (VelDes[R]) / 2000); //normalized to 2m/s[23f]
-    VelFin[L] = Q15((float) (VelDes[L]) / 2000); //normalized to 2m/s[23f]
-
-
-    // <editor-fold defaultstate="collapsed" desc="Manage ramp">
-    if (VelFin[R] != PidRef[R])
-    {
-        if (VelFin[R] > PidRef[R])
-        {
-          if(PidRef[R] >= 0)
-          {
-            PidRef[R] += Acc;
-          }
-          else
-          {
-            PidRef[R] += Dec;
-          }
-
-          if (PidRef[R] >= VelFin[R])
-          {
-            PidRef[R] = VelFin[R];// acceleration is over
-          }
-        }
-        else
-        {
-          if (PidRef[R] >= 0)
-          {
-            PidRef[R] -= Dec;
-          }
-          else
-          {
-            PidRef[R] -= Acc;
-          }
-
-          if (PidRef[R] <= VelFin[R])
-          {
-            PidRef[R] = VelFin[R];// acceleration is over
-          }
-        }
-    }
-
-    if (VelFin[L] != PidRef[L])
-    {
-        if (VelFin[L] > PidRef[L])
-        {
-          if(PidRef[L] >= 0)
-          {
-            PidRef[L] += Acc;
-          }
-          else
-          {
-            PidRef[L] += Dec;
-          }
-
-          if (PidRef[L] >= VelFin[L])
-          {
-            PidRef[L] = VelFin[L];// acceleration is over
-          }
-        }
-        else
-        {
-          if (PidRef[L] >= 0)
-          {
-            PidRef[L] -= Dec;
-          }
-          else
-          {
-            PidRef[L] -= Acc;
-          }
-
-          if (PidRef[L] <= VelFin[L])
-          {
-            PidRef[L] = VelFin[L];// acceleration is over
-          }
-        }
-    }
-
-    // end Manage ramp
-    // </editor-fold>
-
-    SelectIcPrescaler();
-}
-
-void SelectIcPrescaler(void)
-{/**
-*\brief Select the correct Input Capture prescaler
-
-*/
-    switch (IC1CONbits.ICM)
-    {
-        case IC_MODE0:
-            if (Vel[R] >= MAX1)
-            {
-                SwitchIcPrescaler(1,R);
-            }
-            break;
-
-        case IC_MODE1:
-            if (Vel[R] < MIN1)
-            {
-                SwitchIcPrescaler(0,R);
-            }
-            else if (Vel[R] >= MAX2)
-            {
-                SwitchIcPrescaler(2,R);
-            }
-            break;
-
-        case IC_MODE2:
-            if (Vel[R] < MIN2)
-            {
-                SwitchIcPrescaler(1,R);
-            }
-            else if (Vel[R] >= MAX3)
-            {
-                SwitchIcPrescaler(3,R);
-            }
-            break;
-
-        case IC_MODE3:
-            if (Vel[R] < MIN3)
-            {
-                SwitchIcPrescaler(2,R);
-            }
-            break;
-
-        default:
-                SwitchIcPrescaler(0,R);
-            break;
-    }
-
-    switch (IC2CONbits.ICM)
-    {
-        case IC_MODE0:
-            if (Vel[L] >= MAX1)
-            {
-                SwitchIcPrescaler(1,L);
-            }
-            break;
-
-        case IC_MODE1:
-            if (Vel[L] < MIN1)
-            {
-                SwitchIcPrescaler(0,L);
-            }
-            else if (Vel[L] >= MAX2)
-            {
-                SwitchIcPrescaler(2,L);
-            }
-            break;
-
-        case IC_MODE2:
-            if (Vel[L] < MIN2)
-            {
-                SwitchIcPrescaler(1,L);
-            }
-            else if (Vel[L] >= MAX3)
-            {
-                SwitchIcPrescaler(3,L);
-            }
-            break;
-
-        case IC_MODE3:
-            if (Vel[L] < MIN3)
-            {
-                SwitchIcPrescaler(2,L);
-            }
-            break;
-
-        default:
-                SwitchIcPrescaler(0,L);
-            break;
-    }
-}
-
-
-void SwitchIcPrescaler(int Mode, int RL)
-{/**
-*\brief Safely switch to the new Input Capture prescaler
-
-*/
-    __builtin_disi(0x3FFF); //disable interrupts up to priority 6 for n cycles
-    
-// here is the assignment of the ICx module to the correct wheel
-    if (RL == R)
-    {
-        IC1CONbits.ICM = 0; // turn off prescaler
-        Ic1Indx = 0; // reset IC1 interrupt count
-        Ic1CurrPeriod = 0;
-        IC1CONbits.ICM = IcMode[Mode];
-        _IC1IF = 0;  // interrupt flag reset
-    }
-    else
-    {
-        IC2CONbits.ICM = 0; // turn off prescaler
-        Ic2Indx = 0; // reset IC2 interrupt count
-        Ic2CurrPeriod = 0;
-        IC2CONbits.ICM = IcMode[Mode];
-        _IC2IF = 0;  // interrupt flag reset
-    }
-
-    Kvel[RL] = KvelMode[Mode][RL];
-
-    DISICNT = 0; //re-enable interrupts
-}
-
-void DeadReckoning(void)
-{/**
-*\brief Odometry & dead reckoning
-
-The coordinates of the current position of the robot is achieved with an
-algorithm elaborated starting from G.W. Lucas' paper "A Tutorial and Elementary
-Trajectory Model for the Differential Steering System of Robot Wheel Actuators"
-available on Internet:
- http://rossum.sourceforge.net/papers/DiffSteer/DiffSteer.html
-
-*\ref _22 "details [22]"
-*/
-
-    float CosNow; // current value for Cos
-    float SinNow; // current value for Sin
-    float DSpace; // delta traveled distance by the robot
-    float DTheta; // delta rotation angle
-    float DPosX; // delta space on X axis
-    float DPosY; // delta space on Y axis
-    float SaMinusSb;
-    float SrPlusSl;
-    float Radius;
-
-    CYCLE1_FLAG = 0;
-
-    Spmm[R] = SpTick[R] * Ksp[R]; // distance of right wheel in mm
-    SpTick[R] = 0; // reset counter for the next misure
-    Spmm[L] = SpTick[L] * Ksp[L]; // distance of left wheel in mm
-    SpTick[L] = 0; // reset counter for the next misure
-
-#ifdef geographic			// [22aa]
-    SaMinusSb = Spmm[L] - Spmm[R];
-#else
-    SaMinusSb = Spmm[R] - Spmm[L];
-#endif
-
-    SrPlusSl = Spmm[R] + Spmm[L];
-    if (fabs(SaMinusSb) <= SPMIN)
-    {// traveling in a nearly straight line [22a]
-        DSpace = Spmm[R];
-
-#ifdef geographic			// [22aa]
-        DPosX = DSpace*SinPrev;
-        DPosY = DSpace*CosPrev;
-#else
-        DPosX = DSpace*CosPrev;
-        DPosY = DSpace*SinPrev;
-#endif
-
-    }
-    else if (fabs(SrPlusSl) <= SPMIN)
-    {// pivoting around vertical axis without translation [22a]
-        DTheta = SaMinusSb / Axle;
-        ThetaMes = fmodf((ThetaMes + DTheta), TWOPI);//current orient. 2PI range
-        CosPrev = cosf(ThetaMes); // for the next cycle
-        SinPrev = sinf(ThetaMes);
-        DPosX = 0;
-        DPosY = 0;
-        DSpace = 0;
-    }
-    else
-    {// rounding a curve
-        DTheta = SaMinusSb / Axle;
-        ThetaMes = fmodf((ThetaMes + DTheta), TWOPI);//current orient .2PI range
-        CosNow = cosf(ThetaMes);
-        SinNow = sinf(ThetaMes);
-        DSpace = SrPlusSl / 2;
-        Radius = (SemiAxle)*(SrPlusSl / SaMinusSb);
-
-#ifdef geographic			// [22aa]
-        DPosX = Radius * (CosPrev - CosNow);
-        DPosY = Radius * (SinNow - SinPrev);
-#else
-        DPosX = Radius * (SinNow - SinPrev);
-        DPosY = Radius * (CosPrev - CosNow);
-#endif		
-
-        CosPrev = CosNow; // to avoid re-calculation on the next cycle
-        SinPrev = SinNow;
-    }
-
-    Space += DSpace; // total traveled distance
-
-    Orientation(); // position coordinates computed, Angle PID can start [23]
-}
+/*---------------------------------------------------------------------------*/
+/* Initialization Routines                                                   */
+/*---------------------------------------------------------------------------*/
 
 void ConstantsDefault(void)
 {/**
@@ -869,6 +859,25 @@ void ConstantsDefault(void)
     SemiAxle = Axle / 2;
 }
 
+void InitAnglePid(void)
+{/**
+*\brief Initialize the PID data structure: PIDstruct.
+Use the Microchip C30 PID library according to the Microchip Code Example CE019
+		
+*\ref _19d "details [19d]"
+*/
+
+    //Initialize the PID data structure: PIDstruct
+    //Set up pointer to derived coefficients
+    AnglePIDstruct.abcCoefficients = &AngleabcCoefficient[0];
+    //Set up pointer to controller history samples
+    AnglePIDstruct.controlHistory = &AnglecontrolHistory[0];
+    // Clear the controler history and the controller output
+    PIDInit(&AnglePIDstruct);
+    //Derive the a,b, & c coefficients from the Kp, Ki & Kd
+    PIDCoeffCalc(&AngleKCoeffs[0], &AnglePIDstruct);
+}
+
 void InitPidR(void)
 { /**
 *\brief Initialize the PID data structure: PIDstruct.
@@ -905,6 +914,9 @@ Use the Microchip C30 PID library according to the Microchip Code Example CE019
     PIDCoeffCalc(&kCoeffs[L][0], &PIDstructL);
 }
 
+/*---------------------------------------------------------------------------*/
+/* Service Routines                                                          */
+/*---------------------------------------------------------------------------*/
 
 void DelayN1ms(int n)
 {
