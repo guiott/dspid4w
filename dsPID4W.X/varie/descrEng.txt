@@ -516,31 +516,43 @@ RX interrupt is disabled to avoid current command overwrite.
 RX buffer is 4 byte wide, the command parsing must be done before the fifth
 character is come to avoid OVERRUN error.
 
-r=read, w=write
+the board can act both as master or slave, some commands are used only in master
+mode other in slave mode.
+
+Legenda:
+r = request a "read" operation to the board,values must be sent to the requester
+w = the remote commands to set some values into the board
+. = just the header for a replay to the console, not implemented on the board
+
 Known commands:
-A - r All mean parameters request: Vmean, Ctotal, PosX, PosY, Theta
-a - r All detailed parameters request: Vr, Cr, Vl, Cl, PulseR, PulseL
-D - w Setting reference coord. X, Y computing distance [24] Mode C
-d - w Distance from objects and targets, sensors board -> dsNav
-e - r Read error code and reset error condition
-f -   set "Console Debug" mode [30]
-H - w Immediate Halt without decelerating ramp	
-J - w Settings PID coefficients for DistPid: DistKP, DistKI, DistKD
-K - w Settings PID coefficients for SpeedPID: KP, KI, KD
-k - w Settings PID coefficients for AnglePid: AngleKP, AngleKI, AngleKD
-L - w Speed constant parameters designation: KvelR, KvelL
-M - w Mechanical constants: Axle size, KspR, KspL
-O - w Reference orientation angle in degrees
-o - w Reference orientation angle in degrees as a delta of the current Theta
-P - w Setting reference coordinates X, Y in mm [24] Mode B
-Q - r Raw sensors data, dsNav -> console
-R - r Firmware version request
+A - r All mean parameters request: Vmean, Ctotal, PosX, PosY, Theta, IdlePerc
+a - . All mean parameters replay **(only received by console)
+
+B - r All detailed parameters request 2 wheels: Vr, Cr, Vl, Cl
+b - w All detailed parameters replay 2 wheels
+C - r All detailed param.request 4 wheels:VrM, CrM, VlM, ClM, VrS, CrS, VlS, ClS
+c - . All detailed parameters replay 4 wheels **(only received by console)
+
+D - r Read error code and reset error condition
+d - . Read error code replay **(only received by console)
+
+E - r Firmware version request
+e - . Firmware version replay **(only received by console)
+
+F - w Reference orientation angle in degrees
+G - w Reference orientation angle in degrees as a delta of the current Theta
+
+H - w Immediate Halt without decelerating ramp
+I - w set "Console Debug" mode [30]
+
+
 S - w Reference speed setting in mm/s
-s - w Scheduler parameters setting
+V - w Reference speed setting in mm/s for each wheel in slave mode
+W - w Ref. speed setting in mm/s for each wheel in slave mode with param request
+
 * -   Board reset [28]
-# -   start scheduler sequence [32a]
-$ - r One row of map grid sending request [22f]
-z – r/w send back a text string, just for debug.
+Z/z– r/w send back a text string, just for debug.
+
 
 --- Service
 * - w Board reset [28]
@@ -549,38 +561,38 @@ z – r/w send back a text string, just for debug.
 	-Transmit:
 		N/A
 		
-R - r Firmware version request
+E - r Firmware version request
 	-Receive:
 		CmdLen = 1 Params 0
 	-Transmit:	
 		CmdLen = 24	Params 25 (string "Ver")
 
-z – r/w send back a text string, just for debug.
+Z/z – r/w send back a text string, just for debug.
 	-Receive:
 		it just needs HEADER + character z (i.e. @z)
 	-Transmit:	
 		CmdLen = 25 (string "Test")
 	
-e - r Read error code and reset error condition
+D - r Read error code and reset error condition
 	-Receive:
 		CmdLen = 1	Params 0
 	-Transmit:
 		CmdLen = 3	Params 2	(1 int Most Significant First)
 		
-f -   Set "Console Debug" mode [30]
+I -   Set "Console Debug" mode [30]
 	-Receive:
 		CmdLen = 1	Params 0
 	-Transmit:
 		N/A
 
 --- Navigation settings		
-O - w Reference orientation angle in degrees
+F - w Reference orientation angle in degrees (absolute)
 	-Receive:
 		CmdLen = 3	Params 2	(1 int Most Significant First)
 	-Transmit:
 		N/A
 		
-o - w Reference orientation angle in degrees as a delta of the current Theta
+G - w Reference orientation angle in degrees as a delta of the current Theta
 	(relative)
 	-Receive:
 		CmdLen = 3	Params 2	(1 int Most Significant First)
@@ -600,20 +612,48 @@ H - w Immediate Halt without decelerating ramp
 	-Transmit:
 		N/A
 
+V - w Reference speed setting in mm/s for each wheel in slave mode
+	-Receive:
+		CmdLen = 5	Params 4	(2 int Most Significant First) range -MAX +MAX
+	-Transmit:
+		N/A
 
---- Navigation read			
-A - r All mean parameters request: Vmean, Ctotal, PosX, PosY, Theta, IdlePerc
+W - w Ref. speed set in mm/s for each wheel in slave mode with param request
+	-Receive:
+		CmdLen = 5	Params 4	(2 int Most Significant First) range -MAX +MAX
+	-Transmit: command 'b'  VelR, CurrentR, VelL, CurrentL
+		CmdLen = 9	Params 8	(4 int Most Significant First)
+
+--- Navigation read		
+A - r All mean parameters request: Vmean, Ctotal
 	-Receive:
 		CmdLen = 1 Params 0
 	-Transmit:
-		CmdLen = 12	Params 11	(5 int Most Significant First + 1 byte)
+		CmdLen = 5	Params 4	(2 int Most Significant First)
 
-a - r All detailed parameters request: Vr, Cr, Vl, Cl, PulseR, PulseL
+B - r All detailed parameters request 2 wheels: Vr, Cr, Vl, Cl
+  this is just when in slave mode, only 2 motors parameters sent to master board
 	-Receive:
 	CmdLen = 1 Params 0
-	-Transmit:	
-	CmdLen = 13	Params 12	(6 int Most Significant First)
-	
+	-Transmit:
+	CmdLen = 9	Params 8	(4 int Most Significant First)
+
+b - w rear wheels detailed parameters received from slave board:
+      VrS, CrS, VlS, ClS
+  -Receive:
+	CmdLen = 1 Params 0
+	-Transmit:
+	N/A
+
+C - r four wheels detailed param.request: VrM, CrM, VlM, ClM, VrS, CrS, VlS, ClS
+  this is when in master mode, the board sends to supervisor the parameters for
+  all of the motors, RightMaster, LeftMaster, RIghtSlave, LeftSlave
+	-Receive:
+	CmdLen = 1 Params 0
+	-Transmit:
+	CmdLen = 17	Params 16	(8 int Most Significant First)
+
+
 
 *******************************************************************************
 [17]

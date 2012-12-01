@@ -1,0 +1,62 @@
+Both boards start in slave mode, doing nothing.
+
+When one dNav board receives from the supervisor a command that sets vehicle speed or orientation it is elected as master and starts sending wheels speed to slave.
+The master computes the speed for the wheels on each side of robot. The speed depends on mean desired speed, speed differences needed to turn in order to reach or maintain orientation (differential steering) and on ramp slope introduced to reach the desired speed without stress.
+The current orientation can be computed with odometry or it can be received from outside from the IMU board.
+
+Once the wheels speed is computed, it is sent as is to the slave dsNav board. This one must only take care of maintaining the speed for each wheel trough it's own PID control without any other calculi. Even the ramp is computed by the master board.
+
+In this way, the master board sets the speed for Front Left and Front Right motors, the slave board sets the speed for Rear Left and Rear Right motors, the rear motors running at the very same speed of the front ones.
+
+Timing
+each board computes and corrects the wheel speed PID every 1ms (Cycle 0) using the feedback from the Input Capture Modules connected to the encoders.
+Every 10ms (Cycle 1) the master computes the speed needed on each wheel to navigate and sends it to the slave board.
+Every 10 Cycle 1 (100 ms) the master board send a command to the slave that also request the motors current and the actual wheels speed. In this way it's ready to send to the supervisor the actual values for all of the motors. 
+
+Example:
+
+-startup: both boards in idle as slave
+-one board receives command 'S' ordering to travel at a certain speed
+-the board is elected as master
+-every 10ms 
+--master computes speed for each wheel
+--master sends command 'V'(upper-case) to slave with speed for right and left wheels 
+-slave sets the speed for rear wheels
+-every 100ms
+--master sends command 'v' (lower-case) to slave with speed for right and left wheels with the request to send parameters
+--slave replay with information about motor current and wheel speed
+
+
+V - w Reference speed setting in mm/s for each wheel in slave mode
+	-Receive:
+		CmdLen = 5	Params 4	(2 int Most Significant First) range -MAX +MAX
+	-Transmit:
+		N/A
+
+v - w Ref. speed set in mm/s for each wheel in slave mode with param request
+	-Receive:
+		CmdLen = 5	Params 4	(2 int Most Significant First) range -MAX +MAX
+	-Transmit: VelR, CurrentR, VelL, CurrentL
+		CmdLen = 9	Params 8	(4 int Most Significant First)
+		
+a - w All detailed parameters request: Vr, Cr, Vl, Cl
+  this is just when in slave mode, only 2 motors parameters sent to master board
+	-Receive:
+	CmdLen = 1 Params 0
+	-Transmit:	
+	N/A
+
+4 - r four wheels detailed param.request: VrM, CrM, VlM, ClM, VrS, CrS, VlS, ClS
+  this is when in master mode, the board sends to supervisor the parameters for
+  all of the motors, RightMaster, LeftMaster, RIghtSlave, LeftSlave
+	-Receive:
+	CmdLen = 1 Params 0
+	-Transmit:
+	CmdLen = 17	Params 16	(8 int Most Significant First)
+	
+2 - r rear wheels detailed parameters received from slave board:
+      VrS, CrS, VlS, ClS
+  -Receive:
+	CmdLen = 1 Params 0
+	-Transmit:	
+	CmdLen = 9	Params 8	(4 int Most Significant First)

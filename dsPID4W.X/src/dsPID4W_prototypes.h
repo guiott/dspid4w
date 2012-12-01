@@ -1,7 +1,8 @@
 /* ///////////////////////////////////////////////////////////////////////// */
 /* Included	in "dsPid_definitions.h", it contains functions prototypes / */
 /* ///////////////////////////////////////////////////////////////////////// */
-fractional Vel2Fract(int Vel2Conv);
+void WriteIntBuff(int TxBuffValue);
+int ReadIntBuff(void);
 void SelectIcPrescaler(void);
 void SwitchIcPrescaler(int Mode, int RL);
 void ConstantsDefault (void);

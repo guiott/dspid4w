@@ -67,9 +67,10 @@ extern unsigned char UartTmpBuff[][2];
 extern const unsigned char Test[];
 extern unsigned char TmpPtr2;
 extern unsigned char Uart2RxPtrData;
-int Port;			// Port = 0 for UART1, Port = 1 for UART2
-int SendMapPort;	// to temporay store port number for delayed TX
-int ResetPort;		// to temporay store port number for reset
+int Port;           // Port = 0 for UART1, Port = 1 for UART2
+int SendMapPort;    // to temporay store port number for delayed TX
+int ResetPort;      // to temporay store port number for reset
+int TmpBufIndx;     // to fill the UartTmpBuff before sending
 //}
 
 /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
@@ -150,10 +151,10 @@ int j = 0; 		// generic index
 long Blink = 0; // heartbeat blink index
 
 // ADC
-int ADCValue[2] = {0,0};		// 64 sample average ADC AN0,AN1 reading
+int ADCValue[4] = {0,0,0,0};            // 64 sample average ADC also for slave
 #define ADC_CALC_FLAG VOLbits1.bit0	// enable ADC value average calculus
 #define ADC_OVLD_LIMIT 900 // in mA
-#define ADC_OVLD_TIME	100			// n x 10ms
+#define ADC_OVLD_TIME	100             // n x 10ms
 char ADCOvldCount[2] = {0,0};		// how long overload status last 	
 
 // Input Capture (speed measurement)
@@ -191,6 +192,9 @@ Speed calculation K in micron/second = 298536736 -> [19]
 
 #define R 0	// right index
 #define L 1	// left index
+#define RS 2	// right slave index
+#define LS 3	// left salve index
+
 
 // Speed calculation K in m/s
 long KvelMode[4][2]; // constants K_VEL << 15 [19c]
@@ -293,14 +297,13 @@ fractional AngleKCoeffs[] = {0,0,0};
 #define ANGLE_KI AngleKCoeffs[1]
 #define ANGLE_KD AngleKCoeffs[2]
 #define ANGLE_PID_DES AnglePIDstruct.controlReference	// desired angle
-#define ANGLE_PID_MES AnglePIDstruct.measuredOutput		// measured angle
-#define ANGLE_PID_OUT AnglePIDstruct.controlOutput		// PID output
-#define MAX_ROT_SPEED 1000	// MAX speed (+ or -) of wheels during rotation
+#define ANGLE_PID_MES AnglePIDstruct.measuredOutput	// measured angle
+#define ANGLE_PID_OUT AnglePIDstruct.controlOutput	// PID output
+#define MAX_ROT_SPEED 1200	// MAX speed (+ or -) of wheels during rotation
 #define RAD2DEG 57.295779513	// = 180/PI
 #define DEG2RAD 0.0174532925	// = PI/180
 float ThetaDes = 0;	// desired orientation angle (set point) [23] (Rad)
 float ThetaDesRef;	// to temporarely store angle (Rad)
-int AngleCmp;		// compass bearing from sensors board (Deg * 10)
 #define ANGLE_OK_FLAG VARbits1.bit0	// target angle reached
 #define MIN_THETA_ERR DEG2RAD	// acceptable angle error in radians = 1°
 
@@ -338,175 +341,19 @@ unsigned int BlinkOn;		// LED1 on time (ms)
 #define K_ERR_BLINK_ON 2000	// ON TIME for ERR condition
 
 
-int ErrCode;				// Error Code
+int ErrCode;                       // Error Code
 
-#define CONSOLE_DEBUG VARbits1.bit1 // [30]
+#define CONSOLE_DEBUG VARbits1.bit1// [30]
 
-int VelInt[2];			// speed in mm/s as an integer
+int VelInt[4];		// speed in mm/s as an integer for all the wheels
 
-// Scheduler
-unsigned char SchedPtr = 0;	// point to current step into the sequence
-
-/*
-// sequence array initialized for a 360° turn cw in 4 steps
-int SchedValues[16][4]= {		{6,100,0,0},
-								{3,0,90,0},
-								{6,50,0,0},
-								{3,0,180,0},
-								{6,50,0,0},
-								{3,0,270,0},
-								{6,50,0,0},
-								{3,0,0,0},
-								{6,50,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0} };
-*/
-/*
-// sequence array initialized for a 360° turn ccw in 4 steps
-int SchedValues[16][4]= {		{6,100,0,0},
-								{3,0,270,0},
-								{6,50,0,0},
-								{3,0,180,0},
-								{6,50,0,0},
-								{3,0,90,0},
-								{6,50,0,0},
-								{3,0,0,0},
-								{6,50,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0} };
-*/																
-
-// sequence array initialized for a mini UMBmark of 1m x 1m CW
-int SchedValues[16][4]= {		{6,100,0,0},
-								{4,0,0,1000},
-								{5,300,0,1000},
-								{4,0,1000,1000},
-								{5,300,1000,1000},
-								{4,0,1000,0},
-								{5,300,1000,0},
-								{4,0,0,0},
-								{5,300,0,0},
-								{6,80,0,0},
-								{3,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0} };	
-
-/*
-// sequence array initialized for a mini UMBmark of 2.5m x 3.5m CCW
-// point the robot to 90°
-int SchedValues[16][4]= {		{6,100,0,0},
-								{4,0,0,2500},
-								{5,300,0,2500},
-								{4,0,-3500,2500},
-								{5,300,-3500,2500},
-								{4,0,-3500,0},
-								{5,300,-3500,0},
-								{4,0,0,0},
-								{5,300,0,0},
-								{6,80,0,0},
-								{3,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0} };
-*/						
-/*								
-// sequence array initialized for a maxi UMBmark of 4m forward
-int SchedValues[16][4]= {		{6,100,0,0},
-								{4,0,0,4000},
-								{5,300,0,4000},
-								{4,0,4000,4000},
-								{5,300,4000,4000},
-								{4,0,4000,0},
-								{5,300,4000,0},
-								{4,0,0,0},
-								{5,300,0,0},
-								{3,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0} };
-*/								
-/*
-// sequence array initialized for a UMBmark of 4m reward
-int SchedValues[16][4]= {		{6,100,0,0},
-								{4,0,4000,0},
-								{5,300,4000,0},
-								{4,0,4000,4000},
-								{5,300,4000,4000},
-								{4,0,0,4000},
-								{5,300,0,4000},
-								{4,0,0,0},
-								{5,300,0,0},
-								{6,80,0,0},
-								{3,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0} };
-*/
-/*
-// sequence array initialized for a 10m straight forward
-int SchedValues[16][4]= {		{6,50,0,0},
-								{5,300,0,10000},
-								{3,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0} };
-*/
-/*
-// sequence array initialized for a RTC 10m diagonal
-int SchedValues[16][4]= {		{6,100,0,0},
-								{4,0,7200,7200},
-								{5,300,7200,7200},
-								{4,0,0,0},
-								{5,300,0,0},
-								{3,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0},
-								{0,0,0,0} };
-*/
-
-
-unsigned char ResetCount = 0;	// [28]
+#define MASTER_FLAG VARbits1.bit3  // if master dsNav board execute navigation
+#define MAX_SPEED 1200             // rangecheck
+unsigned char ResetCount = 0;	   // [28]
 
 // VOLbits1.bit4 and up available
 
-// VARbits1.bit2 and up available
+// VARbits1.bit3 and up available
 
 // VARbits2.bit0 and up available
 

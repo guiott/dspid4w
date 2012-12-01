@@ -107,8 +107,6 @@ ADC_CALC_FLAG = 0;
 IdleSample = 0;
 IdleCount = 0;
 
-SchedPtr = 0; // [32]
-
 UsartSetting(); // initialize Usart1
 Usart2Setting(); // initialize Usart2
 
@@ -126,6 +124,9 @@ DMA6CONbits.CHEN = 1; // Re-enable DMA Channel
 DMA6REQbits.FORCE = 1; // Manual mode: Kick-start the first transfer
 
 VelDesM = 0;
+
+// by default the board is configures as a slave, waitning for commands
+MASTER_FLAG = 0;
 
 // end settings
 // </editor-fold>
@@ -148,7 +149,7 @@ if (Uart2RxPtrIn != Uart2RxPtrOut) Uart2Rx(); // [6zd]
 if ((UartRxStatus == 99) || (Uart2RxStatus == 99)) Parser();
 
 /* ------------------------------------------------------- DeadReckonig [22] */
-if (CYCLE1_FLAG) DeadReckoning();
+if (CYCLE1_FLAG && MASTER_FLAG) DeadReckoning();
 
 /* ----------------------------------------------------------------- Cycle 2 */
 if (CYCLE2_FLAG) CYCLE2_FLAG = 0;
@@ -341,84 +342,92 @@ void Speed(void)
       }
     */
 
-    VelFin[R] = Vel2Fract(VelDes[R]);
-    VelFin[L] = Vel2Fract(VelDes[L]);
-
-    // <editor-fold defaultstate="collapsed" desc="Manage ramp">
-    if (VelFin[R] != PidRef[R])
+    if(MASTER_FLAG) // if slave the ramp is controlled by master board
     {
-        if (VelFin[R] > PidRef[R])
+        // <editor-fold defaultstate="collapsed" desc="Manage ramp">
+        VelFin[R] = Q15((float) (VelDes[R]) / 2000); //normalized to 2m/s[23f]
+        VelFin[L] = Q15((float) (VelDes[L]) / 2000); //normalized to 2m/s[23f]
+
+        if (VelFin[R] != PidRef[R])
         {
-          if(PidRef[R] >= 0)
-          {
-            PidRef[R] += Acc;
-          }
-          else
-          {
-            PidRef[R] += Dec;
-          }
+            if (VelFin[R] > PidRef[R])
+            {
+              if(PidRef[R] >= 0)
+              {
+                PidRef[R] += Acc;
+              }
+              else
+              {
+                PidRef[R] += Dec;
+              }
 
-          if (PidRef[R] >= VelFin[R])
-          {
-            PidRef[R] = VelFin[R];// acceleration is over
-          }
+              if (PidRef[R] >= VelFin[R])
+              {
+                PidRef[R] = VelFin[R];// acceleration is over
+              }
+            }
+            else
+            {
+              if (PidRef[R] >= 0)
+              {
+                PidRef[R] -= Dec;
+              }
+              else
+              {
+                PidRef[R] -= Acc;
+              }
+
+              if (PidRef[R] <= VelFin[R])
+              {
+                PidRef[R] = VelFin[R];// acceleration is over
+              }
+            }
         }
-        else
+
+        if (VelFin[L] != PidRef[L])
         {
-          if (PidRef[R] >= 0)
-          {
-            PidRef[R] -= Dec;
-          }
-          else
-          {
-            PidRef[R] -= Acc;
-          }
+            if (VelFin[L] > PidRef[L])
+            {
+              if(PidRef[L] >= 0)
+              {
+                PidRef[L] += Acc;
+              }
+              else
+              {
+                PidRef[L] += Dec;
+              }
 
-          if (PidRef[R] <= VelFin[R])
-          {
-            PidRef[R] = VelFin[R];// acceleration is over
-          }
+              if (PidRef[L] >= VelFin[L])
+              {
+                PidRef[L] = VelFin[L];// acceleration is over
+              }
+            }
+            else
+            {
+              if (PidRef[L] >= 0)
+              {
+                PidRef[L] -= Dec;
+              }
+              else
+              {
+                PidRef[L] -= Acc;
+              }
+
+              if (PidRef[L] <= VelFin[L])
+              {
+                PidRef[L] = VelFin[L];// acceleration is over
+              }
+            }
         }
-    }
-
-    if (VelFin[L] != PidRef[L])
-    {
-        if (VelFin[L] > PidRef[L])
-        {
-          if(PidRef[L] >= 0)
-          {
-            PidRef[L] += Acc;
-          }
-          else
-          {
-            PidRef[L] += Dec;
-          }
-
-          if (PidRef[L] >= VelFin[L])
-          {
-            PidRef[L] = VelFin[L];// acceleration is over
-          }
-        }
-        else
-        {
-          if (PidRef[L] >= 0)
-          {
-            PidRef[L] -= Dec;
-          }
-          else
-          {
-            PidRef[L] -= Acc;
-          }
-
-          if (PidRef[L] <= VelFin[L])
-          {
-            PidRef[L] = VelFin[L];// acceleration is over
-          }
-        }
-    }
 
     // end Manage ramp
     // </editor-fold>
+    }
+    else
+    {
+        PidRef[R] = Q15((float) (VelDes[R]) / 2000); //normalized to 2m/s[23f]
+        PidRef[L] = Q15((float) (VelDes[L]) / 2000); //normalized to 2m/s[23f]
+    }
 
     SelectIcPrescaler();
 }
@@ -545,13 +554,6 @@ void SwitchIcPrescaler(int Mode, int RL)
     DISICNT = 0; //re-enable interrupts
 }
 
-fractional Vel2Fract(int Vel2Conv)
-{/**
-*\brief Convert speed value in Q15 format normalized to 2m/s
-*/
-    return Q15((float) (Vel2Conv) / 2000); //normalized to 2m/s[23f]
-}
-
 void ThetaDesF(float Angle)
 {/** 
 *\brief Starts the AnglePID in order to point ot the desired Angle
@@ -569,9 +571,9 @@ void Parser(void)
 
 *\ref _16 "details [16]"
 */
-    int Ptmp; // temp for position values
+    int Ptmp;    // temp for position values
     int CurrTmp; // temp for motors current value
-    int Alpha; // rotation angle in degrees
+    int Alpha;   // rotation angle in degrees
 
     if (UartRxStatus == 99) // the command come from UART1
     {
@@ -594,7 +596,7 @@ void Parser(void)
 
     switch (UartRxCmd[Port])
     {
-            // --- Navigation values read
+    // --- Navigation values read
         case 'A': // all parameters request (mean)
             // VelMes = Int -> 2 byte (mm/s)
             //			Ptmp = (VelMes[R] + VelMes[L]) >> 1;	// average speed
@@ -606,94 +608,159 @@ void Parser(void)
                 Ptmp = VelDesM;
                 ADCValue[R] = abs(VelDesM);
                 ADCValue[L] = abs(VelDesM);
-                ThetaMes = ThetaDes;
             }
-            UartTmpBuff[0][Port] = Ptmp >> 8;
-            UartTmpBuff[1][Port] = Ptmp;
+            TmpBufIndx=0; // reset buffer index
+            WriteIntBuff(Ptmp);
             // Curr = int -> 2byte (mA)
             CurrTmp = ADCValue[R] + ADCValue[L]; // total current
-            UartTmpBuff[2][Port] = CurrTmp >> 8;
-            UartTmpBuff[3][Port] = CurrTmp;
-            // ThetaMes rounded in a Int -> 2 byte (degrees)
-            Ptmp = ThetaMes * RAD2DEG; // Theta
-            Alpha = FLOAT2INT(Ptmp);
-            UartTmpBuff[8][Port] = Alpha >> 8;
-            UartTmpBuff[9][Port] = Alpha;
-            // angle reading from sensors board compass (deg * 10)
-            UartTmpBuff[10][Port] = AngleCmp >> 8;
-            UartTmpBuff[11][Port] = AngleCmp;
-            // idle time in %
-            UartTmpBuff[12][Port] = IdlePerc;
-
-            TxParameters('A', 13, Port);
+            WriteIntBuff(CurrTmp);
+            
+            TxParameters('a', TmpBufIndx, Port);
             break;
 
-        case 'a': // all parameters request (details)
+        case 'B': // all parameters request (details)
             // VelInt = Int -> 2 byte
             VelInt[R] = (long) (Vel[R] * 1000) >> 15; // VelL
             VelInt[L] = (long) (Vel[L] * 1000) >> 15; // VelL
-            if (CONSOLE_DEBUG) //[30]
-            {
-                VelInt[R] = VelDesM;
-                VelInt[L] = VelDesM;
-                ADCValue[R] = abs(VelDesM);
-                ADCValue[L] = abs(VelDesM);
-                ThetaMes = ThetaDes;
-            }
-            UartTmpBuff[0][Port] = VelInt[R] >> 8;
-            UartTmpBuff[1][Port] = VelInt[R];
-            UartTmpBuff[2][Port] = VelInt[L] >> 8;
-            UartTmpBuff[3][Port] = VelInt[L];
+            TmpBufIndx=0; // reset buffer index
+            WriteIntBuff(VelInt[R]);
+            WriteIntBuff(VelInt[L]);
+
             // ADCValue = int -> 2byte
-            UartTmpBuff[4][Port] = ADCValue[R] >> 8; // CurrR
-            UartTmpBuff[5][Port] = ADCValue[R];
-            UartTmpBuff[6][Port] = ADCValue[L] >> 8; // CurrL
-            UartTmpBuff[7][Port] = ADCValue[L];
-            // Space = int -> 2byte
-            UartTmpBuff[8][Port] = SpTick[R] >> 8; // SpTickR
-            UartTmpBuff[9][Port] = SpTick[R];
-            SpTick[R] = 0; // [19]
-            UartTmpBuff[10][Port] = SpTick[L] >> 8; // SpTickL
-            UartTmpBuff[11][Port] = SpTick[L];
-            SpTick[L] = 0; // [19]
-            TxParameters('a', 12, Port);
+            WriteIntBuff(ADCValue[R]); // CurrR
+            WriteIntBuff(ADCValue[L]); // CurrL
+
+            TxParameters('b', TmpBufIndx, Port);
             break;
 
+        case 'b':
+            // High Byte * 256 + Low Byte
+            // rear wheels detailed parameters received from slave board:
+            // VelRightSlave, VelLeftSlave, CurrentRightSlave, CurrentLeftSlave
+            VelInt[RS] = ReadIntBuff();
+            VelInt[LS] = ReadIntBuff();
+            ADCValue[RS] = ReadIntBuff();
+            ADCValue[LS] = ReadIntBuff();
+            break;
 
-            //--- Navigation parameters settings
+        case 'C':
+            // High Byte * 256 + Low Byte
+            // four wheels detailed param.request for master board:
+            // VrM, CrM, VlM, ClM, VrS, CrS, VlS, ClS
+            VelInt[R] = (long) (Vel[R] * 1000) >> 15; // VelL
+            VelInt[L] = (long) (Vel[L] * 1000) >> 15; // VelL
 
-        case 'O': // setting ref. orientation angle in degrees (absolute)
+            TmpBufIndx=0; // reset buffer index
+            WriteIntBuff(VelInt[R]);
+            WriteIntBuff(VelInt[L]);
+            WriteIntBuff(VelInt[RS]);
+            WriteIntBuff(VelInt[LS]);
+            // ADCValue = int -> 2byte
+            WriteIntBuff(ADCValue[R]); // CurrR
+            WriteIntBuff(ADCValue[L]); // CurrL
+            WriteIntBuff(ADCValue[RS]); // CurrR slave
+            WriteIntBuff(ADCValue[LS]); // CurrL slave
+
+            TxParameters('c', TmpBufIndx, Port);
+            break;
+            
+
+    //--- Navigation parameters settings
+
+        case 'F': // setting ref. orientation angle in degrees (absolute)
             // [24] Mode A
             // High Byte * 256 + Low Byte
-            Ptmp = (UartRxBuff[IncrCircPtr(Port)][Port] << 8) +
-              (UartRxBuff[IncrCircPtr(Port)][Port]);
+            Ptmp = ReadIntBuff();
             ThetaDesF(Ptmp * DEG2RAD);
             VelDecr = 1; // [24d]
             if (CONSOLE_DEBUG) //[30]
             {
                 ThetaMes = ThetaDes;
             }
+            MASTER_FLAG = 1; // master mode
             break;
 
-        case 'o': // setting reference orientation angle in degrees
+        case 'G': // setting reference orientation angle in degrees
             // as a delta of the current orientation (relative)
             // [24] Mode A
             // High Byte * 256 + Low Byte
-            Ptmp = (UartRxBuff[IncrCircPtr(Port)][Port] << 8) +
-              (UartRxBuff[IncrCircPtr(Port)][Port]);
+            Ptmp = ReadIntBuff();
             ThetaDesF(ThetaDes + (Ptmp * DEG2RAD));
             VelDecr = 1; // [24d]
+            MASTER_FLAG = 1; // master mode
             break;
 
-        case 'S': // setting reference speed (as mm/s)
+        case 'S': // setting reference speed for the vehicle (as mm/s)
             // High Byte * 256 + Low Byte
-            VelDesM = (UartRxBuff[IncrCircPtr(Port)][Port] << 8) +
-              (UartRxBuff[IncrCircPtr(Port)][Port]);
-            if (VelDesM > 999) VelDesM = 999; // range check
-            if (VelDesM < -999) VelDesM = -999; // range check
+            VelDesM = ReadIntBuff();
+            if (VelDesM > MAX_SPEED) VelDesM = MAX_SPEED;   // range check
+            if (VelDesM < -MAX_SPEED) VelDesM = -MAX_SPEED; // range check
+            MASTER_FLAG = 1; // master mode
             break;
 
-        case 'H': // immediate Halt without decelerating ramp.In this way it
+        case 'V': //Reference speed setting in mm/s for each wheel in slave mode
+            // High Byte * 256 + Low Byte
+            VelDes[R] = ReadIntBuff();
+            VelDes[L] = ReadIntBuff();
+            if (VelDes[R] > MAX_SPEED)
+            {
+                 VelDes[R] = MAX_SPEED;   // range check
+            }
+            else if (VelDes[R] < -MAX_SPEED)
+            {
+                VelDes[R] = -MAX_SPEED; // range check
+            }
+
+            if (VelDes[L] > MAX_SPEED)
+            {
+                 VelDes[L] = MAX_SPEED;   // range check
+            }
+            else if (VelDes[L] < -MAX_SPEED)
+            {
+                VelDes[L] = -MAX_SPEED; // range check
+            }
+
+            MASTER_FLAG = 0; // slave mode
+            Speed();
+            break;
+
+        case 'W': //Ref. wheel speed set in slave mode with parameter request
+            // High Byte * 256 + Low Byte
+            VelDes[R] = ReadIntBuff();
+            VelDes[L] = ReadIntBuff();
+            if (VelDes[R] > MAX_SPEED)
+            {
+                 VelDes[R] = MAX_SPEED;   // range check
+            }
+            else if (VelDes[R] < -MAX_SPEED)
+            {
+                VelDes[R] = -MAX_SPEED; // range check
+            }
+
+            if (VelDes[L] > MAX_SPEED)
+            {
+                 VelDes[L] = MAX_SPEED;   // range check
+            }
+            else if (VelDes[L] < -MAX_SPEED)
+            {
+                VelDes[L] = -MAX_SPEED; // range check
+            }
+
+            MASTER_FLAG = 0; // slave mode
+            Speed();
+
+            TmpBufIndx=0; // reset buffer index
+            WriteIntBuff(VelInt[R]);
+            WriteIntBuff(VelInt[L]);
+
+            // ADCValue = int -> 2byte
+            WriteIntBuff(ADCValue[R]); // CurrR
+            WriteIntBuff(ADCValue[L]); // CurrL
+
+            TxParameters('b', TmpBufIndx, Port);
+            break;
+
+         case 'H': // immediate Halt without decelerating ramp.In this way it
             // uses the brake effect of H bridge in LAP mode
             VelDesM = 0;
             if (CONSOLE_DEBUG) //[30]
@@ -705,7 +772,7 @@ void Parser(void)
             }
             break;
 
-            //--- Service
+    //--- Service
         case '*': // Board reset [28]
             if (ResetCount < 3)
             {
@@ -720,7 +787,7 @@ void Parser(void)
             }
             break;
 
-        case 'R': // Firmware version request
+        case 'E': // Firmware version request
             // Send string 'Ver'
             for (i = 0; i < 27; i++)
             {
@@ -729,7 +796,7 @@ void Parser(void)
             TxParameters('R', 26, Port);
             break;
 
-        case 'z': // send back a text string, just for debug
+        case 'Z': // send back a text string, just for debug
             // Send string 'Test'
             for (i = 0; i < 27; i++)
             {
@@ -738,17 +805,17 @@ void Parser(void)
             TxParameters('z', 24, Port);
             break;
 
-        case 'e': // Read error code and reset error condition
+        case 'D': // Read error code and reset error condition
             // Send error value
             BlinkPeriod = NORM_BLINK_PER; // LED1 blinking period (ms)
             BlinkOn = NORM_BLINK_ON; // LED1 on time (ms)
             Blink = 0;
             UartTmpBuff[0][Port] = ErrCode >> 8;
             UartTmpBuff[1][Port] = ErrCode;
-            TxParameters('e', 2, Port);
+            TxParameters('d', 2, Port);
             break;
 
-        case 'f': // set "Console Debug" mode [30]
+        case 'I': // set "Console Debug" mode [30]
             CONSOLE_DEBUG = UartRxBuff[IncrCircPtr(Port)][Port];
             break;
 
@@ -819,44 +886,44 @@ void ConstantsDefault(void)
 *\ref _29 "details [29]"
 */
 
-    ANGLE_KP = Q15(0.9999);
-    ANGLE_KI = Q15(0.7);
-    ANGLE_KD = Q15(0.0001);
+ANGLE_KP = Q15(0.9999);
+ANGLE_KI = Q15(0.7);
+ANGLE_KD = Q15(0.0001);
 
-    /*
-    KP1=Q15(0.9);
-    KI1=Q15(0.7);
-    KD1=Q15(0.1);
-    KP2=Q15(0.9);
-    KI2=Q15(0.7);
-    KD2=Q15(0.1);
-     */
+/*
+KP1=Q15(0.9);
+KI1=Q15(0.7);
+KD1=Q15(0.1);
+KP2=Q15(0.9);
+KI2=Q15(0.7);
+KD2=Q15(0.1);
+ */
 
-    KPR = Q15(0.9);
-    KIR = Q15(0.9);
-    KDR = Q15(0.001);
-    KPL = Q15(0.9);
-    KIL = Q15(0.9);
-    KDL = Q15(0.001);
+KPR = Q15(0.9);
+KIR = Q15(0.9);
+KDR = Q15(0.001);
+KPL = Q15(0.9);
+KIL = Q15(0.9);
+KDL = Q15(0.001);
 
-    // constants K_VEL << 15 [19c]
-    KvelMode[0][R] = (((DIAMETER_R * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 / 2; //X2   right
-    KvelMode[0][L] = (((DIAMETER_L * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 / 2; //X2   left
-    KvelMode[1][R] = (((DIAMETER_R * PI) / (CPR * GEAR_RATIO)) * FCY)*32768; //X1   right
-    KvelMode[1][L] = (((DIAMETER_L * PI) / (CPR * GEAR_RATIO)) * FCY)*32768; //X1   left
-    KvelMode[2][R] = (((DIAMETER_R * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 * 4; //X1/4 right
-    KvelMode[2][L] = (((DIAMETER_L * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 * 4; //X1/4 left
-    KvelMode[3][R] = (((DIAMETER_R * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 * 16; //X1/4 right
-    KvelMode[3][L] = (((DIAMETER_L * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 * 16; //X1/4 left
+// constants K_VEL << 15 [19c]
+KvelMode[0][R] = (((DIAMETER_R * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 / 2; //X2   right
+KvelMode[0][L] = (((DIAMETER_L * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 / 2; //X2   left
+KvelMode[1][R] = (((DIAMETER_R * PI) / (CPR * GEAR_RATIO)) * FCY)*32768; //X1   right
+KvelMode[1][L] = (((DIAMETER_L * PI) / (CPR * GEAR_RATIO)) * FCY)*32768; //X1   left
+KvelMode[2][R] = (((DIAMETER_R * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 * 4; //X1/4 right
+KvelMode[2][L] = (((DIAMETER_L * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 * 4; //X1/4 left
+KvelMode[3][R] = (((DIAMETER_R * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 * 16; //X1/4 right
+KvelMode[3][L] = (((DIAMETER_L * PI) / (CPR * GEAR_RATIO)) * FCY)*32768 * 16; //X1/4 left
 
-    Kvel[R] = KvelMode[0][R];
-    Kvel[L] = KvelMode[0][L];
+Kvel[R] = KvelMode[0][R];
+Kvel[L] = KvelMode[0][L];
 
-    Ksp[R] = 0.005065008;
-    Ksp[L] = 0.0050520;
-    Axle = 184.8728;
+Ksp[R] = 0.005065008;
+Ksp[L] = 0.0050520;
+Axle = 184.8728;
 
-    SemiAxle = Axle / 2;
+SemiAxle = Axle / 2;
 }
 
 void InitAnglePid(void)
@@ -917,6 +984,25 @@ Use the Microchip C30 PID library according to the Microchip Code Example CE019
 /*---------------------------------------------------------------------------*/
 /* Service Routines                                                          */
 /*---------------------------------------------------------------------------*/
+void WriteIntBuff(int TxBuffValue)
+{/**
+*\brief Fill an integer (2 bytes) to Uart TX Buffer
+  * keep the buffer index updated to the next free
+*/
+
+    UartTmpBuff[TmpBufIndx][Port] = TxBuffValue >> 8;
+    TmpBufIndx ++;
+    UartTmpBuff[TmpBufIndx][Port] = TxBuffValue;
+    TmpBufIndx ++;
+}
+
+int ReadIntBuff(void)
+{/**
+*\brief Return an integer (2 bytes) from Uart RX Buffer
+*/
+    return (UartRxBuff[IncrCircPtr(Port)][Port] << 8) +
+              (UartRxBuff[IncrCircPtr(Port)][Port]);
+}
 
 void DelayN1ms(int n)
 {
