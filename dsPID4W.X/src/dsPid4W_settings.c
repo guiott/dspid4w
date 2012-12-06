@@ -7,6 +7,7 @@
 /////////////////////////////////////////////////////////////////////////////*/
 
 // standard includes
+#include "dsPid4W_settings.h"
 #include "dsPID4W_common.h"
 
 /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
@@ -257,7 +258,7 @@ __builtin_write_OSCCONL(0x01);		// Start clock switching
 	/* Port	B   			 			     */
 	/*-----------------------------------------------------------*/
 	_TRISB4	 = 0;
-  _TRISB7	 = 0;
+  // _TRISB7	 = 0; // used just for test
 	_TRISB13 = 0;
 	_TRISB15 = 0;
   /*
@@ -588,7 +589,7 @@ __builtin_write_OSCCONL(0x01);		// Start clock switching
 #warning *********************************************************************
 
 /*-------------------------------------------------------------------*/
-/* A/D converter [2]  			    			     */
+/* A/D converter [2]                                                 */
 /*-------------------------------------------------------------------*/
 AD1CON1bits.ADSIDL = 1;	// stop in idle
 AD1CON1bits.ADDMABM = 0;// scatter/gather mode
@@ -644,7 +645,7 @@ DMA7CONbits.CHEN=1; // Enable DMA
 /*.............................................................A/D converter */
 
 /*---------------------------------------------------------------------------*/
-/* PWM	[11]        			    				     */
+/* PWM	[11]                                                                 */
 /*---------------------------------------------------------------------------*/
 // Holds the value to be loaded into dutycycle register
 unsigned int period;
@@ -688,7 +689,7 @@ PWM2CON1bits.PEN1H = 0;
 
 
 /*---------------------------------------------------------------------------*/
-/* QEI1	[4]           			    				     */
+/* QEI1	[4]                                                                  */
 /*---------------------------------------------------------------------------*/
 /* 
 OpenQEI(QEI_MODE_x4_MATCH & QEI_INPUTS_NOSWAP & QEI_IDLE_STOP
@@ -711,7 +712,7 @@ POS1CNT = 0;
 /*.......................................................................QEI */
 
 /*---------------------------------------------------------------------------*/
-/* QEI2	[4]           			    				     */
+/* QEI2	[4]                                                                  */
 /*---------------------------------------------------------------------------*/
 /* 
 OpenQEI(QEI_MODE_x4_MATCH & QEI_INPUTS_NOSWAP & QEI_IDLE_STOP
@@ -734,7 +735,7 @@ POS2CNT = 0;
 /*.......................................................................QEI */
 
 /*---------------------------------------------------------------------------*/
-/* Input Capture 1 [7]   			    			     */
+/* Input Capture 1 [7]                                                       */
 /*---------------------------------------------------------------------------*/
 IC1CONbits.ICSIDL = 1;//	Stop in idle
 IC1CONbits.ICTMR = 1;	//	Timer 2
@@ -743,7 +744,7 @@ IC1CONbits.ICM = 1;		//	Capture mode every edge
 /*.............................................................Input Capture */
 
 /*---------------------------------------------------------------------------*/
-/* Input Capture 2 [7]   			    			     */
+/* Input Capture 2 [7]                                                       */
 /*---------------------------------------------------------------------------*/
 // IC_EVERY_EDGE & IC_INT_1CAPTURE & IC_IDLE_STOP & IC_TIMER2_SRC)
 IC2CONbits.ICSIDL = 1;//	Stop in idle
@@ -752,11 +753,26 @@ IC2CONbits.ICI = 0;		//	Interrupt on every capture event
 IC2CONbits.ICM = 1;		//	Capture mode every  edge
 /*.............................................................Input Capture */
 
+/*---------------------------------------------------------------------------*/
+/* I2C                                                                       */
+/*---------------------------------------------------------------------------*/
+
+I2C1ADD = I2C_ADDR;   
+_I2CEN = 1;           //Enable I2C on I/O pins
+_A10M  = 0;           //7-bit addressing
+_STREN = 1;           //Clock stretching enabled
+I2C1TRN = 0;          // empty TX buffer
+I2C1RCV = 0;          // empty RX buffer
+_SCLREL = 1;          //release clock
+
+I2C_POINTER_FLAG = 0;   // reset State 1B
+
+/*.......................................................................I2C */
 
 
 #ifndef TIMER_OFF
 /*---------------------------------------------------------------------------*/
-/* Timer 2	[12]    			    			     */
+/* Timer 2	[12]                                                             */
 /*---------------------------------------------------------------------------*/
 #define TMR2_VALUE 0xFFFF
 /*OpenTimer2(	T2_ON & 
@@ -776,7 +792,7 @@ PR2 = TMR2_VALUE; 		// Load the period value
 
 
 /*---------------------------------------------------------------------------*/
-/* Timer 1	1ms [13]                                                     */
+/* Timer 1	1ms [13]                                                         */
 /*---------------------------------------------------------------------------*/
 #ifdef CLOCK_FREQ_10
 	#define TMR1_VALUE 40000
@@ -810,12 +826,19 @@ ConfigIntMCPWM1(PWM1_INT_DIS);
 // ConfigIntCapture1(IC_INT_ON & IC_INT_PRIOR_5);
 IEC0bits.IC1IE=1;
 IPC0bits.IC1IP=5;
+_IC1IF = 0; // interrupt flag reset
 
 //-------Input Capture 2 [7]
 // ConfigIntCapture2(IC_INT_ON & IC_INT_PRIOR_5);
 IEC0bits.IC2IE=1;
 IPC1bits.IC2IP=5;
+_IC2IF = 0; // interrupt flag reset
 
+//-------I2C
+// Slave I2C. Priority set lower than IC to avoid loss of encoder pulses
+IEC1bits.SI2C1IE=1;
+IPC4bits.SI2C1IP=4;
+_SI2C1IF = 0;     //Clear I2C slave Interrupt flag
 				
 #ifndef TIMER_OFF
 	//-------Timer 2	[12]

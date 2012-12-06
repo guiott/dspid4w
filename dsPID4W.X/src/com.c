@@ -63,9 +63,9 @@ U1STAbits.UTXISEL0 = 0;		// Interrupt after one Tx character is transmitted
 U1STAbits.UTXISEL1 = 0;			                            
 U1STAbits.URXISEL  = 0;		// Interrupt after one RX character is received
 
-//  Enable UART Rx and Tx ?????????????????????????????disabled for debug
-U1MODEbits.UARTEN  	= 0;	// Enable UART
-U1STAbits.UTXEN 	= 0;	// Enable UART Tx
+//  Disable UART Rx and Tx if the same porte are used for I2C
+U1MODEbits.UARTEN = 0;// Disable UART
+U1STAbits.UTXEN 	= 0;// Disable UART Tx
 IEC4bits.U1EIE 		= 0;
 _U1RXIF				= 0;	// Reset RX interrupt flag
 _U1RXIE				= 0;	// Enable RX interrupt
@@ -89,7 +89,7 @@ float BRG2;
 /* 	Baud Rate = Fcy / ( 4 * (UxBRG + 1) ) with BRGH = 1
 	value for the U2BRG register rounded to closest integer (+0.5)
 */
-BaudRate2 = 115200; // desired baud rate 
+BaudRate2 = 640000; // desired baud rate
 BRG2 = (FCY/(4*(BaudRate2)))-0.5; 
 
 /*..............................................................DMA UART2 TX */
@@ -126,9 +126,9 @@ U2STAbits.UTXISEL0 = 0;		// Interrupt after one Tx character is transmitted
 U2STAbits.UTXISEL1 = 0;			                            
 U2STAbits.URXISEL  = 0;		// Interrupt after one RX character is received
 
-//  Enable UART2 Rx and Tx ?????????????????????????????disabled for debug
-U2MODEbits.UARTEN  	= 0;	// Enable UART
-U2STAbits.UTXEN 	= 0;	// Enable UART Tx
+//  Enable UART2 Rx and Tx
+U2MODEbits.UARTEN = 1;	// Enable UART
+U2STAbits.UTXEN 	= 1;	// Enable UART Tx
 IEC4bits.U2EIE 		= 0;
 _U2RXIF				= 0;	// Reset RX interrupt flag
 _U2RXIE				= 0;	// Enable RX interrupt

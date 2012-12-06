@@ -137,7 +137,7 @@ MASTER_FLAG = 0;
 
 while (1) // start of idle cycle [25a]
 {
-// TEST ^= 1; // used for debug, toggle pin 16
+// TEST ^= 1; // used for debug, toggle pin 16 alternatively with I2C
 
 /* ----------------------------------------- one character coming from UART1 */
 if (UartRxPtrIn != UartRxPtrOut) UartRx(); // [6d]
@@ -1288,34 +1288,155 @@ void __attribute__((interrupt, no_auto_psv)) _U2ErrInterrupt(void)
     IFS4bits.U2EIF = 0;
 }
 
-//{
-/* Disabled------------------
-void _ISR_PSV _CNInterrupt(void)	// change Notification [3]
-{
-  _CNIF = 0;		// interrupt flag reset
-}
+void __attribute__((interrupt,no_auto_psv)) _SI2C1Interrupt(void)
+{/**
+*\brief Slave I2C
+ *----This is a porting of assembly code for Microchip AN734-------------------
+ * the original AN734 ASM code was written for a PIC18F series MCU. It was
+ * first ported in C language: http://www.guiott.com/Lino/Display/DisplayI2C.htm
+ * this a porting of the porting on a dsPIC33F DSC
+ * over the I2C protocol it was added a 24Cxx EEPROM like data exchange mode.
+ * The procedure is executed within an ISR in order to speed up
+ * the response on I2C bus and avoid interruption, so an high care must be
+ * taken on execution time and on external calls. If there are less strict
+ * requirements the entire procedure can be executed in the main part after
+ * the setting of a flag from the ISR.
 
-void _ISR_PSV _INT1Interrupt(void)	// External Interrupt INT1 [8]
-{
-  _INT1IF = 0;    // interrupt flag reset
-  ClrWdt();		// [1]
-  LED1=0;			// [1]
-}
+/*         D/A -P- -S- R/W RBF TBF
+ *
+ *  0   0   0   0   1   0   1   0  State 1: I2C write operation,
+ *                                          last byte was an address byte*/
+#define STATE1 0X000A
 
-void _ISR_PSV _U1TXInterrupt(void)	// UART TX [6a]
-{
-  _U1TXIF = 0;	// interrupt flag reset
+/*  0   0   1   0   1   0   1   0  State 2: I2C write operation,
+ *                                          last byte was a data byte*/
+#define STATE2 0X002A
 
-  if (UartTxCntr < UartTxBuffSize)
-  {
-    WriteUART1(UartTxBuff[UartTxCntr]);
-    UartTxCntr++;
-  }
-  else
-  {// waits for UART sending complete to disable the peripheral
-    TxFlag = 2;
-  }
+/*  0   0   0   0   1   1   X   0  State 3: I2C read operation,
+ *                                          last byte was an address byte*/
+#define STATE3 0X000C
+
+/*  0   0   1   0   1   1   0   0  State 4: I2C read operation,
+ *                                          last byte was a data byte*/
+#define STATE4 0X002C
+
+/*  0   0   1   0   1   X   0   0  State 5: Slave I2C logic reset
+ *                       _SCLREL = 1        by NACK from master*/
+#define STATE5 0X0028
+
+#define STATE_MASK 0X002E // 00101110 to mask out unimportant bits in I2C1STAT
+#define BF_MASK 0X002C    // 00101100 to mask out RBF bit in I2C1STAT
+#define RW_MASK 0X0028    // 00101000 to mask out R/W bit in I2C1STAT
+#define MAX_TRY 100       // maximum number of retries for transmission
+//----------------------------------------------------------------------------*/
+unsigned char SspstatMsk;
+unsigned char I2cAddr; //to perform dummy reading of the SSPBUFF
+
+ if (_SI2C1IF)   // I2C interrupt?
+ {
+    SspstatMsk=I2C1STAT & STATE_MASK; //mask out unimportant bits
+
+//State 1------------------
+    if(SspstatMsk == STATE1)
+    {/* After State 1 the State Machine goes in State 1B, the next received
+      * byte will be the register pointer*/
+        I2C_POINTER_FLAG = 1;   // go into the State 1B
+        I2cAddr = I2C1RCV;  //dummy reading of the buffer to empty it
+        _SCLREL = 1; //release clock immediately to free up the bus
+    }
+
+//State 2------------------
+    else if(SspstatMsk == STATE2)
+    {
+        if(I2C_POINTER_FLAG)
+        {//come from State 1B, the received data is the register pointer
+            I2cRegPtr = I2C1RCV;
+            _SCLREL = 1; //release clock immediately to free up the bus
+        }
+        else
+        {//the received data is a valid byte to store
+            I2cRegRx[I2cRegPtr] = I2C1RCV;
+            _SCLREL = 1; //release clock immediately to free up the bus
+            I2cRegPtr ++;
+        }
+
+        if(I2cRegPtr >= I2C_BUFF_SIZE_RX)
+        {
+            I2cRegPtr = I2C_BUFF_SIZE_RX - 1;
+        }
+        I2C_POINTER_FLAG = 0;
+    }
+
+//State 3------------------
+    else if((SspstatMsk & BF_MASK) == STATE3)
+    {//first reading from master after it sends address
+        I2cAddr = I2C1RCV;  //dummy reading of the buffer to empty it
+        for(i=0; i<MAX_TRY; i++)
+        {//check MAX_TRY times if buffer is empty
+            if(!_TBF)
+            {//if buffer is empty send a byte
+                I2C1TRN = I2cRegTx[I2cRegPtr]; //send requested byte
+                _SCLREL = 1; //free up the bus
+                I2cRegPtr ++;
+                if(I2cRegPtr >= I2C_BUFF_SIZE_TX)
+                {
+                    I2cRegPtr = I2C_BUFF_SIZE_TX - 1;
+                }
+                // insert here an OK flag if needed
+                goto State3End; //everything's fine. Procedure over
+           }
+        }
+        // insert here a fault flag if needed
+        // if here the buffer was never empty
+        Nop();
+
+        State3End:
+        I2C_POINTER_FLAG = 0;
+    }
+
+//State 4------------------
+    else if((!_SCLREL) && (SspstatMsk == STATE4))
+    {//subsequent readings. Usually it does the same as State 3
+
+        for(i=0; i<MAX_TRY; i++)
+        {//check MAX_TRY times if buffer is empty
+            if(!_TBF)
+            {//if buffer is empty send a byte
+                I2C1TRN = I2cRegTx[I2cRegPtr]; //send requested byte
+                _SCLREL = 1; //free up the bus
+                I2cRegPtr ++;
+                if(I2cRegPtr >= I2C_BUFF_SIZE_TX)
+                {
+                    I2cRegPtr = I2C_BUFF_SIZE_TX - 1;
+                }
+                // insert here an OK flag if needed
+                goto State4End; //everything's fine. Procedure over
+            }
+        }
+        // insert here a fault flag if needed
+        // if here the buffer was never empty
+        Nop();
+
+        State4End:
+        I2C_POINTER_FLAG = 0;
+    }
+
+//State 5------------------
+    else if((SspstatMsk & RW_MASK) == STATE5)
+    {//end cycle
+        _SCLREL = 1; //release clock
+        I2C_POINTER_FLAG = 0;
+    }
+
+//Default------------------
+    else
+    {//not in a known state. A different safety action could be performed here
+        _SCLREL = 1; //release clock
+        I2C_POINTER_FLAG = 0;
+    }
+
+    _SCLREL = 1; //release clock
+    _SI2C1IF = 0;  //Clear MSSP Interrupt flag
 }
------------------- Disabled */
-//}
+}
 /*****************************************************************************/

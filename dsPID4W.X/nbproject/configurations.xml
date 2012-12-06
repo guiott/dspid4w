@@ -8,6 +8,7 @@
       <itemPath>src/dsPID4W_common.h</itemPath>
       <itemPath>src/dsPID4W_definitions.h</itemPath>
       <itemPath>src/dsPID4W_prototypes.h</itemPath>
+      <itemPath>src/dsPid4W_settings.h</itemPath>
     </logicalFolder>
     <logicalFolder name="LinkerScript"
                    displayName="Linker Files"

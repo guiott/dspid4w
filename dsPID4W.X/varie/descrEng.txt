@@ -1619,54 +1619,54 @@ TABLE 7-1: INTERRUPT VECTORS - dsPIC30F DSCs (NON-SMPS)
 IRQ# 	Primary Name 		Alternate Name 			Vector Function
 N/A 	_ReservedTrap0 		_AltReservedTrap0 		Reserved
 N/A 	_OscillatorFail 	_AltOscillatorFail 		Oscillator fail trap
-N/A 	_AddressError 		_AltAddressError 		Address error trap
-N/A 	_StackError 		_AltStackError 			Stack error trap
-N/A 	_MathError 			_AltMathError 			Math error trap
+N/A 	_AddressError 		_AltAddressError      Address error trap
+N/A 	_StackError       _AltStackError        Stack error trap
+N/A 	_MathError        _AltMathError         Math error trap
 N/A 	_ReservedTrap5 		_AltReservedTrap5 		Reserved
 N/A 	_ReservedTrap6 		_AltReservedTrap6 		Reserved
 N/A 	_ReservedTrap7 		_AltReservedTrap7 		Reserved
 0 		_INT0Interrupt 		_AltINT0Interrupt 		INT0 External interrupt 0
-1 		_IC1Interrupt 		_AltIC1Interrupt 		IC1 Input capture 1
-2 		_OC1Interrupt 		_AltOC1Interrupt 		OC1 Output compare 1
-3 		_T1Interrupt 		_AltT1Interrupt 		TMR1 Timer 1 expired
-4 		_IC2Interrupt 		_AltIC2Interrupt 		IC2 Input capture 2
-5 		_OC2Interrupt 		_AltOC2Interrupt 		OC2 Output compare 2
-6 		_T2Interrupt 		_AltT2Interrupt 		TMR2 Timer 2 expired
-7 		_T3Interrupt 		_AltT3Interrupt 		TMR3 Timer 3 expired
+1 		_IC1Interrupt 		_AltIC1Interrupt      IC1 Input capture 1
+2 		_OC1Interrupt 		_AltOC1Interrupt      OC1 Output compare 1
+3 		_T1Interrupt      _AltT1Interrupt       TMR1 Timer 1 expired
+4 		_IC2Interrupt 		_AltIC2Interrupt      IC2 Input capture 2
+5 		_OC2Interrupt 		_AltOC2Interrupt      OC2 Output compare 2
+6 		_T2Interrupt      _AltT2Interrupt       TMR2 Timer 2 expired
+7 		_T3Interrupt      _AltT3Interrupt       TMR3 Timer 3 expired
 8 		_SPI1Interrupt 		_AltSPI1Interrupt 		SPI1 Ser. per. interface 1
 9 		_U1RXInterrupt 		_AltU1RXInterrupt 		UART1RX Uart 1 Receiver
 10 		_U1TXInterrupt 		_AltU1TXInterrupt 		UART1TX Uart 1 Transmitter
-11 		_ADCInterrupt 		_AltADCInterrupt 		ADC convert completed
-12 		_NVMInterrupt 		_AltNVMInterrupt 		NMM NVM write completed
+11 		_ADCInterrupt 		_AltADCInterrupt      ADC convert completed
+12 		_NVMInterrupt 		_AltNVMInterrupt      NMM NVM write completed
 13 		_SI2CInterrupt 		_AltSI2CInterrupt 		Slave I2C™ interrupt
 14 		_MI2CInterrupt 		_AltMI2CInterrupt 		Master I2C™ interrupt
-15 		_CNInterrupt 		_AltCNInterrupt 		CN Input change interrupt
+15 		_CNInterrupt      _AltCNInterrupt       CN Input change interrupt
 16 		_INT1Interrupt 		_AltINT1Interrupt 		INT1 External interrupt 0
-17 		_IC7Interrupt 		_AltIC7Interrupt 		IC7 Input capture 7
-18 		_IC8Interrupt 		_AltIC8Interrupt 		IC8 Input capture 8
-19 		_OC3Interrupt 		_AltOC3Interrupt 		OC3 Output compare 3
-20 		_OC4Interrupt 		_AltOC4Interrupt 		OC4 Output compare 4
-21 		_T4Interrupt 		_AltT4Interrupt 		TMR4 Timer 4 expired
-22 		_T5Interrupt 		_AltT5Interrupt 		TMR5 Timer 5 expired
+17 		_IC7Interrupt 		_AltIC7Interrupt      IC7 Input capture 7
+18 		_IC8Interrupt 		_AltIC8Interrupt      IC8 Input capture 8
+19 		_OC3Interrupt 		_AltOC3Interrupt      OC3 Output compare 3
+20 		_OC4Interrupt 		_AltOC4Interrupt      OC4 Output compare 4
+21 		_T4Interrupt      _AltT4Interrupt       TMR4 Timer 4 expired
+22 		_T5Interrupt      _AltT5Interrupt       TMR5 Timer 5 expired
 23 		_INT2Interrupt 		_AltINT2Interrupt 		INT2 External interrupt 2
 24 		_U2RXInterrupt 		_AltU2RXInterrupt 		UART2RX Uart 2 Receiver
 25 		_U2TXInterrupt 		_AltU2TXInterrupt 		UART2TX Uart 2 Transmitter
 26 		_SPI2Interrupt 		_AltSPI2Interrupt 		SPI2 Ser. per. Interface 2
-27 		_C1Interrupt 		_AltC1Interrupt 		CAN1 combined IRQ
-28 		_IC3Interrupt 		_AltIC3Interrupt 		IC3 Input capture 3
-29 		_IC4Interrupt 		_AltIC4Interrupt 		IC4 Input capture 4
-30 		_IC5Interrupt 		_AltIC5Interrupt 		IC5 Input capture 5
-31 		_IC6Interrupt 		_AltIC6Interrupt 		IC6 Input capture 6
-32 		_OC5Interrupt 		_AltOC5Interrupt 		OC5 Output compare 5
-33 		_OC6Interrupt 		_AltOC6Interrupt 		OC6 Output compare 6
-34 		_OC7Interrupt 		_AltOC7Interrupt 		OC7 Output compare 7
-35 		_OC8Interrupt 		_AltOC8Interrupt 		OC8 Output compare 8
+27 		_C1Interrupt      _AltC1Interrupt       CAN1 combined IRQ
+28 		_IC3Interrupt 		_AltIC3Interrupt      IC3 Input capture 3
+29 		_IC4Interrupt 		_AltIC4Interrupt      IC4 Input capture 4
+30 		_IC5Interrupt 		_AltIC5Interrupt      IC5 Input capture 5
+31 		_IC6Interrupt 		_AltIC6Interrupt      IC6 Input capture 6
+32 		_OC5Interrupt 		_AltOC5Interrupt      OC5 Output compare 5
+33 		_OC6Interrupt 		_AltOC6Interrupt      OC6 Output compare 6
+34 		_OC7Interrupt 		_AltOC7Interrupt      OC7 Output compare 7
+35 		_OC8Interrupt 		_AltOC8Interrupt      OC8 Output compare 8
 36 		_INT3Interrupt 		_AltINT3Interrupt 		INT3 External interrupt 3
 37 		_INT4Interrupt 		_AltINT4Interrupt 		INT4 External interrupt 4
-38 		_C2Interrupt 		_AltC2Interrupt 		CAN2 combined IRQ
-39 		_PWMInterrupt 		_AltPWMInterrupt 		PWM period match
-40 		_QEIInterrupt 		_AltQEIInterrupt 		QEI position count. compare
-41 		_DCIInterrupt 		_AltDCIInterrupt 		DCI CODEC tranfer completed
-42 		_LVDInterrupt 		_AltLVDInterrupt 		PLVD low voltage detected
+38 		_C2Interrupt      _AltC2Interrupt       CAN2 combined IRQ
+39 		_PWMInterrupt 		_AltPWMInterrupt      PWM period match
+40 		_QEIInterrupt 		_AltQEIInterrupt      QEI position count. compare
+41 		_DCIInterrupt 		_AltDCIInterrupt      DCI CODEC tranfer completed
+42 		_LVDInterrupt 		_AltLVDInterrupt      PLVD low voltage detected
 43 		_FLTAInterrupt 		_AltFLTAInterrupt 		FLTA MCPWM fault A
 44 		_FLTBInterrupt 		_AltFLTBInterrupt 		FLTB MCPWM fault B

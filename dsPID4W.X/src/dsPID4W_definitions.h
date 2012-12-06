@@ -351,9 +351,20 @@ int VelInt[4];		// speed in mm/s as an integer for all the wheels
 #define MAX_SPEED 1200             // rangecheck
 unsigned char ResetCount = 0;	   // [28]
 
+//I2C definitions
+unsigned char I2cRegPtr;//Pointer to first byte to read or write in the register
+
+//TX registers array
+#define I2C_BUFF_SIZE_TX 6
+unsigned char I2cRegTx[I2C_BUFF_SIZE_TX]={0,1,2,3,4,5};//TX registers array
+
+#define I2C_BUFF_SIZE_RX 6
+unsigned char I2cRegRx[I2C_BUFF_SIZE_RX]={0,1,2,3,4,5};
+
+
 // VOLbits1.bit4 and up available
 
-// VARbits1.bit3 and up available
+// VARbits1.bit4 and up available
 
 // VARbits2.bit0 and up available
 
