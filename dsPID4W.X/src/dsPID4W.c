@@ -152,7 +152,7 @@ if ((UartRxStatus == 99) || (Uart2RxStatus == 99)) Parser();
 if (CYCLE1_FLAG && MASTER_FLAG) DeadReckoning();
 
 /* ----------------------------------------------------------------- Cycle 2 */
-if (CYCLE2_FLAG) CYCLE2_FLAG = 0;
+if (CYCLE2_FLAG) SlowCycleOp();
 
 /*----------------------------------------- ADC value average calculus  [2a] */
 if (ADC_CALC_FLAG) AdcCalc();
@@ -600,35 +600,30 @@ void Parser(void)
         case 'A': // all parameters request (mean)
             // VelMes = Int -> 2 byte (mm/s)
             //			Ptmp = (VelMes[R] + VelMes[L]) >> 1;	// average speed
-            VelInt[R] = (long) (Vel[R] * 1000) >> 15; // VelR
-            VelInt[L] = (long) (Vel[L] * 1000) >> 15; // VelL
-            Ptmp = (VelInt[R] + VelInt[L]) >> 1; // average speed
+            Ptmp=(I2CTxBuff.I.VelInt[R] + I2CTxBuff.I.VelInt[L]) >> 1;//average speed
             if (CONSOLE_DEBUG) //[30]
             {
                 Ptmp = VelDesM;
-                ADCValue[R] = abs(VelDesM);
-                ADCValue[L] = abs(VelDesM);
+                I2CTxBuff.I.ADCValue[R] = abs(VelDesM);
+                I2CTxBuff.I.ADCValue[L] = abs(VelDesM);
             }
             TmpBufIndx=0; // reset buffer index
             WriteIntBuff(Ptmp);
             // Curr = int -> 2byte (mA)
-            CurrTmp = ADCValue[R] + ADCValue[L]; // total current
+            CurrTmp=I2CTxBuff.I.ADCValue[R] + I2CTxBuff.I.ADCValue[L];//total current
             WriteIntBuff(CurrTmp);
             
             TxParameters('a', TmpBufIndx, Port);
             break;
 
         case 'B': // all parameters request (details)
-            // VelInt = Int -> 2 byte
-            VelInt[R] = (long) (Vel[R] * 1000) >> 15; // VelL
-            VelInt[L] = (long) (Vel[L] * 1000) >> 15; // VelL
             TmpBufIndx=0; // reset buffer index
-            WriteIntBuff(VelInt[R]);
-            WriteIntBuff(VelInt[L]);
+            WriteIntBuff(I2CTxBuff.I.VelInt[R]);
+            WriteIntBuff(I2CTxBuff.I.VelInt[L]);
 
             // ADCValue = int -> 2byte
-            WriteIntBuff(ADCValue[R]); // CurrR
-            WriteIntBuff(ADCValue[L]); // CurrL
+            WriteIntBuff(I2CTxBuff.I.ADCValue[R]); // CurrR
+            WriteIntBuff(I2CTxBuff.I.ADCValue[L]); // CurrL
 
             TxParameters('b', TmpBufIndx, Port);
             break;
@@ -637,29 +632,27 @@ void Parser(void)
             // High Byte * 256 + Low Byte
             // rear wheels detailed parameters received from slave board:
             // VelRightSlave, VelLeftSlave, CurrentRightSlave, CurrentLeftSlave
-            VelInt[RS] = ReadIntBuff();
-            VelInt[LS] = ReadIntBuff();
-            ADCValue[RS] = ReadIntBuff();
-            ADCValue[LS] = ReadIntBuff();
+            I2CTxBuff.I.VelInt[RS] = ReadIntBuff();
+            I2CTxBuff.I.VelInt[LS] = ReadIntBuff();
+            I2CTxBuff.I.ADCValue[RS] = ReadIntBuff();
+            I2CTxBuff.I.ADCValue[LS] = ReadIntBuff();
             break;
 
         case 'C':
             // High Byte * 256 + Low Byte
             // four wheels detailed param.request for master board:
             // VrM, CrM, VlM, ClM, VrS, CrS, VlS, ClS
-            VelInt[R] = (long) (Vel[R] * 1000) >> 15; // VelL
-            VelInt[L] = (long) (Vel[L] * 1000) >> 15; // VelL
 
             TmpBufIndx=0; // reset buffer index
-            WriteIntBuff(VelInt[R]);
-            WriteIntBuff(VelInt[L]);
-            WriteIntBuff(VelInt[RS]);
-            WriteIntBuff(VelInt[LS]);
+            WriteIntBuff(I2CTxBuff.I.VelInt[R]);
+            WriteIntBuff(I2CTxBuff.I.VelInt[L]);
+            WriteIntBuff(I2CTxBuff.I.VelInt[RS]);
+            WriteIntBuff(I2CTxBuff.I.VelInt[LS]);
             // ADCValue = int -> 2byte
-            WriteIntBuff(ADCValue[R]); // CurrR
-            WriteIntBuff(ADCValue[L]); // CurrL
-            WriteIntBuff(ADCValue[RS]); // CurrR slave
-            WriteIntBuff(ADCValue[LS]); // CurrL slave
+            WriteIntBuff(I2CTxBuff.I.ADCValue[R]); // CurrR
+            WriteIntBuff(I2CTxBuff.I.ADCValue[L]); // CurrL
+            WriteIntBuff(I2CTxBuff.I.ADCValue[RS]); // CurrR slave
+            WriteIntBuff(I2CTxBuff.I.ADCValue[LS]); // CurrL slave
 
             TxParameters('c', TmpBufIndx, Port);
             break;
@@ -750,12 +743,12 @@ void Parser(void)
             Speed();
 
             TmpBufIndx=0; // reset buffer index
-            WriteIntBuff(VelInt[R]);
-            WriteIntBuff(VelInt[L]);
+            WriteIntBuff(I2CTxBuff.I.VelInt[R]);
+            WriteIntBuff(I2CTxBuff.I.VelInt[L]);
 
             // ADCValue = int -> 2byte
-            WriteIntBuff(ADCValue[R]); // CurrR
-            WriteIntBuff(ADCValue[L]); // CurrL
+            WriteIntBuff(I2CTxBuff.I.ADCValue[R]); // CurrR
+            WriteIntBuff(I2CTxBuff.I.ADCValue[L]); // CurrL
 
             TxParameters('b', TmpBufIndx, Port);
             break;
@@ -767,8 +760,8 @@ void Parser(void)
             {
                 VelMes[R] = 0;
                 VelMes[L] = 0;
-                ADCValue[R] = 0;
-                ADCValue[L] = 0;
+                I2CTxBuff.I.ADCValue[R] = 0;
+                I2CTxBuff.I.ADCValue[L] = 0;
             }
             break;
 
@@ -843,10 +836,10 @@ void AdcCalc(void)
         ADCValueTmp[R] += DmaAdc[R][AdcCount];
         ADCValueTmp[L] += DmaAdc[L][AdcCount];
     }
-    ADCValue[R] = ADCValueTmp[R] >> 6; // [2a]
-    ADCValue[L] = ADCValueTmp[L] >> 6; // [2a]	 	
+    I2CTxBuff.I.ADCValue[R] = ADCValueTmp[R] >> 6; // [2a]
+    I2CTxBuff.I.ADCValue[L] = ADCValueTmp[L] >> 6; // [2a]
 
-    if (ADCValue[R] > ADC_OVLD_LIMIT) // [2b]
+    if (I2CTxBuff.I.ADCValue[R] > ADC_OVLD_LIMIT) // [2b]
     {
         ADCOvldCount[R]++;
     }
@@ -855,7 +848,7 @@ void AdcCalc(void)
         ADCOvldCount[R] = 0;
     }
 
-    if (ADCValue[L] > ADC_OVLD_LIMIT) // [2b]
+    if (I2CTxBuff.I.ADCValue[L] > ADC_OVLD_LIMIT) // [2b]
     {
         ADCOvldCount[L]++;
     }
@@ -984,6 +977,17 @@ Use the Microchip C30 PID library according to the Microchip Code Example CE019
 /*---------------------------------------------------------------------------*/
 /* Service Routines                                                          */
 /*---------------------------------------------------------------------------*/
+void SlowCycleOp(void)
+{/**
+*\brief Execute the operations at a Cycle2 timing
+*/
+    CYCLE2_FLAG = 0;
+      
+    //convert the Q15 Vel values to the equivalent int values
+    I2CTxBuff.I.VelInt[R] = (long) (Vel[R] * 1000) >> 15;
+    I2CTxBuff.I.VelInt[L] = (long) (Vel[L] * 1000) >> 15;
+}
+
 void WriteIntBuff(int TxBuffValue)
 {/**
 *\brief Fill an integer (2 bytes) to Uart TX Buffer
@@ -1375,7 +1379,7 @@ unsigned char I2cAddr; //to perform dummy reading of the SSPBUFF
         {//check MAX_TRY times if buffer is empty
             if(!_TBF)
             {//if buffer is empty send a byte
-                I2C1TRN = I2cRegTx[I2cRegPtr]; //send requested byte
+                I2C1TRN = I2CTxBuff.C[I2cRegPtr]; //send requested byte
                 _SCLREL = 1; //free up the bus
                 I2cRegPtr ++;
                 if(I2cRegPtr >= I2C_BUFF_SIZE_TX)
@@ -1402,7 +1406,7 @@ unsigned char I2cAddr; //to perform dummy reading of the SSPBUFF
         {//check MAX_TRY times if buffer is empty
             if(!_TBF)
             {//if buffer is empty send a byte
-                I2C1TRN = I2cRegTx[I2cRegPtr]; //send requested byte
+                I2C1TRN = I2CTxBuff.C[I2cRegPtr]; //send requested byte
                 _SCLREL = 1; //free up the bus
                 I2cRegPtr ++;
                 if(I2cRegPtr >= I2C_BUFF_SIZE_TX)

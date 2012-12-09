@@ -151,7 +151,6 @@ int j = 0; 		// generic index
 long Blink = 0; // heartbeat blink index
 
 // ADC
-int ADCValue[4] = {0,0,0,0};            // 64 sample average ADC also for slave
 #define ADC_CALC_FLAG VOLbits1.bit0	// enable ADC value average calculus
 #define ADC_OVLD_LIMIT 900 // in mA
 #define ADC_OVLD_TIME	100             // n x 10ms
@@ -345,8 +344,6 @@ int ErrCode;                       // Error Code
 
 #define CONSOLE_DEBUG VARbits1.bit1// [30]
 
-int VelInt[4];		// speed in mm/s as an integer for all the wheels
-
 #define MASTER_FLAG VARbits1.bit3  // if master dsNav board execute navigation
 #define MAX_SPEED 1200             // rangecheck
 unsigned char ResetCount = 0;	   // [28]
@@ -355,11 +352,39 @@ unsigned char ResetCount = 0;	   // [28]
 unsigned char I2cRegPtr;//Pointer to first byte to read or write in the register
 
 //TX registers array
-#define I2C_BUFF_SIZE_TX 6
-unsigned char I2cRegTx[I2C_BUFF_SIZE_TX]={0,1,2,3,4,5};//TX registers array
+#define I2C_BUFF_SIZE_TX 16
+
+// I2C TX registers array
+struct _TxBuff
+{
+    int VelInt[4];   // speed in mm/s as an integer for all the wheels
+    int ADCValue[4]; // 64 sample average ADC also for slave
+};
+
+union __TxBuff
+{
+    struct _TxBuff I;// to use as integers, little endian LSB first
+    char C[16];       // to use as bytes to send on I2C buffer
+}I2CTxBuff;
+
 
 #define I2C_BUFF_SIZE_RX 6
 unsigned char I2cRegRx[I2C_BUFF_SIZE_RX]={0,1,2,3,4,5};
+
+// RX Buffer
+struct _RxBuff
+{
+    int Uno;
+    int Due;
+    int Tre;
+};
+
+union __RxBuff
+{
+    struct _RxBuff I;// to use as integers, little endian LSB first
+    char C[6];       // to use as bytes to send on I2C buffer
+}RxBuff;
+
 
 
 // VOLbits1.bit4 and up available

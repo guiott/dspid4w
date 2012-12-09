@@ -21,5 +21,6 @@
     };
     extern struct Bits VARbits1;
 
+
 #endif	/* SETTINGS_H */
 
