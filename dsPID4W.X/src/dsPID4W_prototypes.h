@@ -9,7 +9,6 @@ void SwitchIcPrescaler(int Mode, int RL);
 void ConstantsDefault (void);
 void PidCalc (void);
 void PidLCalc (void);
-void ThetaDesF(float Angle);
 void AdcCalc(void);
 void DelayN1ms(int n);
 void DelayN10us(int n);

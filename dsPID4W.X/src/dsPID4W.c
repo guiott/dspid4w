@@ -123,10 +123,10 @@ DMA6CNT = 25; // # of DMA requests
 DMA6CONbits.CHEN = 1; // Re-enable DMA Channel
 DMA6REQbits.FORCE = 1; // Manual mode: Kick-start the first transfer
 
-VelDesM = 0;
+I2CRxBuff.I.VelDesM = 0;
 
 // by default the board is configures as a slave, waitning for commands
-MASTER_FLAG = 0;
+MasterFlag = 0;
 
 // end settings
 // </editor-fold>
@@ -149,7 +149,7 @@ if (Uart2RxPtrIn != Uart2RxPtrOut) Uart2Rx(); // [6zd]
 if ((UartRxStatus == 99) || (Uart2RxStatus == 99)) Parser();
 
 /* ------------------------------------------------------- DeadReckonig [22] */
-if (CYCLE1_FLAG && MASTER_FLAG) DeadReckoning();
+if (CYCLE1_FLAG && MasterFlag) DeadReckoning();
 
 /* ----------------------------------------------------------------- Cycle 2 */
 if (CYCLE2_FLAG) SlowCycleOp();
@@ -214,7 +214,11 @@ available on Internet:
     float SaMinusSb;
     float SrPlusSl;
     float Radius;
+    int ThetaMes;
+    int ThetaDes;
 
+    ThetaDes = I2CRxBuff.I.ThetaDes * DEG2RAD;
+    ThetaMes = I2CRxBuff.I.ThetaMes * DEG2RAD;
     CYCLE1_FLAG = 0;
 
     Spmm[R] = SpTick[R] * Ksp[R]; // distance of right wheel in mm
@@ -287,27 +291,27 @@ PID procedure to maintain the desired orientation.
 */
 
     int DeltaVel; // difference in speed between the wheels to rotate
-    int RealVel; // VelDesM after reduction controlled by Dist PID
+    int RealVel;  // VelDesM after reduction controlled by Dist PID
     float Error;
 
-    if (ThetaDes < 0) ThetaDes += TWOPI; // keep angle value positive
-    if (ThetaMes < 0) ThetaMes += TWOPI;
-    Error = ThetaMes - ThetaDes;
-    if (Error > PI) // search for the best direction to correct error [23a]
+    if (I2CRxBuff.I.ThetaDes<0)I2CRxBuff.I.ThetaDes+=360;//keep angle value pos.
+    if (I2CRxBuff.I.ThetaMes<0)I2CRxBuff.I.ThetaMes+=360;
+    Error = I2CRxBuff.I.ThetaDes - I2CRxBuff.I.ThetaMes;
+    if (Error > 180) // search for the best direction to correct error [23a]
     {
-        Error -= TWOPI;
+        Error -= 360;
     }
-    else if (Error < -PI)
+    else if (Error < -180)
     {
-        Error += TWOPI;
+        Error += 360;
     }
 
-    ANGLE_PID_DES = 0; // ref value translated to 0 [23c]
-    ANGLE_PID_MES = Q15(Error / PI); // current error [23b]
+    ANGLE_PID_MES = 0; // des value translated to 0 [23c]
+    ANGLE_PID_DES = Q15(Error / 180); // current error [23b]
     PID(&AnglePIDstruct);
 
     DeltaVel = (ANGLE_PID_OUT >> 7); // MAX delta in int = 256 [23d]
-    RealVel = VelDesM * VelDecr; // [24d]
+    RealVel = I2CRxBuff.I.VelDesM * VelDecr; // [24d]
     VelDes[R] = RealVel - DeltaVel; // [23e]
     VelDes[L] = RealVel + DeltaVel;
 
@@ -342,7 +346,7 @@ void Speed(void)
       }
     */
 
-    if(MASTER_FLAG) // if slave the ramp is controlled by master board
+    if(MasterFlag) // if slave the ramp is controlled by master board
     {
         // <editor-fold defaultstate="collapsed" desc="Manage ramp">
         VelFin[R] = Q15((float) (VelDes[R]) / 2000); //normalized to 2m/s[23f]
@@ -554,17 +558,6 @@ void SwitchIcPrescaler(int Mode, int RL)
     DISICNT = 0; //re-enable interrupts
 }
 
-void ThetaDesF(float Angle)
-{/** 
-*\brief Starts the AnglePID in order to point ot the desired Angle
-*\ref _23ca "details [23ca]"
-*\param[in] Angle The new direction
-*/
-    ThetaDes = Angle;
-    ThetaDesRef = ThetaDes;
-    PIDInit(&AnglePIDstruct);
-}
-
 void Parser(void)
 {/** 
 *\brief Command Parser from commands coming from both UARTs
@@ -600,17 +593,17 @@ void Parser(void)
         case 'A': // all parameters request (mean)
             // VelMes = Int -> 2 byte (mm/s)
             //			Ptmp = (VelMes[R] + VelMes[L]) >> 1;	// average speed
-            Ptmp=(I2CTxBuff.I.VelInt[R] + I2CTxBuff.I.VelInt[L]) >> 1;//average speed
+            Ptmp=(I2CTxBuff.I.VelInt[R]+I2CTxBuff.I.VelInt[L])>>1;//avrg. speed
             if (CONSOLE_DEBUG) //[30]
             {
-                Ptmp = VelDesM;
-                I2CTxBuff.I.ADCValue[R] = abs(VelDesM);
-                I2CTxBuff.I.ADCValue[L] = abs(VelDesM);
+                Ptmp = I2CRxBuff.I.VelDesM;
+                I2CTxBuff.I.ADCValue[R] = abs(I2CRxBuff.I.VelDesM);
+                I2CTxBuff.I.ADCValue[L] = abs(I2CRxBuff.I.VelDesM);
             }
             TmpBufIndx=0; // reset buffer index
             WriteIntBuff(Ptmp);
             // Curr = int -> 2byte (mA)
-            CurrTmp=I2CTxBuff.I.ADCValue[R] + I2CTxBuff.I.ADCValue[L];//total current
+            CurrTmp=I2CTxBuff.I.ADCValue[R]+I2CTxBuff.I.ADCValue[L];//totalCurr.
             WriteIntBuff(CurrTmp);
             
             TxParameters('a', TmpBufIndx, Port);
@@ -663,32 +656,31 @@ void Parser(void)
         case 'F': // setting ref. orientation angle in degrees (absolute)
             // [24] Mode A
             // High Byte * 256 + Low Byte
-            Ptmp = ReadIntBuff();
-            ThetaDesF(Ptmp * DEG2RAD);
+            I2CRxBuff.I.ThetaDes = ReadIntBuff();
             VelDecr = 1; // [24d]
             if (CONSOLE_DEBUG) //[30]
             {
-                ThetaMes = ThetaDes;
+                I2CRxBuff.I.ThetaMes = I2CRxBuff.I.ThetaDes;
             }
-            MASTER_FLAG = 1; // master mode
+            MasterFlag = 1; // master mode
             break;
 
         case 'G': // setting reference orientation angle in degrees
             // as a delta of the current orientation (relative)
             // [24] Mode A
             // High Byte * 256 + Low Byte
-            Ptmp = ReadIntBuff();
-            ThetaDesF(ThetaDes + (Ptmp * DEG2RAD));
+            I2CRxBuff.I.ThetaDes = ReadIntBuff();
             VelDecr = 1; // [24d]
-            MASTER_FLAG = 1; // master mode
+            MasterFlag = 1; // master mode
             break;
 
         case 'S': // setting reference speed for the vehicle (as mm/s)
             // High Byte * 256 + Low Byte
-            VelDesM = ReadIntBuff();
-            if (VelDesM > MAX_SPEED) VelDesM = MAX_SPEED;   // range check
-            if (VelDesM < -MAX_SPEED) VelDesM = -MAX_SPEED; // range check
-            MASTER_FLAG = 1; // master mode
+            I2CRxBuff.I.VelDesM = ReadIntBuff();
+            // range check
+            if (I2CRxBuff.I.VelDesM>MAX_SPEED) I2CRxBuff.I.VelDesM = MAX_SPEED;
+            if (I2CRxBuff.I.VelDesM<-MAX_SPEED) I2CRxBuff.I.VelDesM= -MAX_SPEED;
+            MasterFlag = 1; // master mode
             break;
 
         case 'V': //Reference speed setting in mm/s for each wheel in slave mode
@@ -713,7 +705,7 @@ void Parser(void)
                 VelDes[L] = -MAX_SPEED; // range check
             }
 
-            MASTER_FLAG = 0; // slave mode
+            MasterFlag = 0; // slave mode
             Speed();
             break;
 
@@ -739,7 +731,7 @@ void Parser(void)
                 VelDes[L] = -MAX_SPEED; // range check
             }
 
-            MASTER_FLAG = 0; // slave mode
+            MasterFlag = 0; // slave mode
             Speed();
 
             TmpBufIndx=0; // reset buffer index
@@ -755,7 +747,7 @@ void Parser(void)
 
          case 'H': // immediate Halt without decelerating ramp.In this way it
             // uses the brake effect of H bridge in LAP mode
-            VelDesM = 0;
+            I2CRxBuff.I.VelDesM = 0;
             if (CONSOLE_DEBUG) //[30]
             {
                 VelMes[R] = 0;
@@ -861,7 +853,7 @@ void AdcCalc(void)
     {
         ADCOvldCount[R] = 0;
         ADCOvldCount[R] = 0;
-        VelDesM = 0; // immediate halt
+        I2CRxBuff.I.VelDesM = 0; // immediate halt
         BlinkOn = 50; // very fast blink for alarm
         BlinkPeriod = 100;
         ErrCode = -30;
@@ -1359,7 +1351,7 @@ unsigned char I2cAddr; //to perform dummy reading of the SSPBUFF
         }
         else
         {//the received data is a valid byte to store
-            I2cRegRx[I2cRegPtr] = I2C1RCV;
+            I2CRxBuff.C[I2cRegPtr] = I2C1RCV;
             _SCLREL = 1; //release clock immediately to free up the bus
             I2cRegPtr ++;
         }

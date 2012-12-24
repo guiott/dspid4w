@@ -223,7 +223,6 @@ const int IcMode[4] = {0b001, 0b011, 0b100, 0b101};
 
 int VelDes[2] = {0,0};	// desired speed mm/s
 int VelMes[2] = {0,0};	// measured speed mm/s	
-int VelDesM = 0;		// mean measured speed mm/s [23]
 // threshold to change PID calculation frequency. = Speed in mm/s *2^15/1000
 #define VEL_MIN_PID 1600 // Approx 50mm/s
 unsigned char PidCycle[2] = {0,0}; // counter for longer cycle PID
@@ -241,12 +240,6 @@ float Space = 0;		// total distance traveled by the robot
 #define SPMIN 0.01		// Minimum value to perform odometry
 float CosPrev =	1;		// previous value for Cos(ThetaMes)
 float SinPrev =	0;		// previous value for Sin(ThetaMes)
-
-float ThetaMes = 0;		// Current orientation angle
-// #define PI 	  3.1415926536 180°
-#define TWOPI 6.2831853072	// 360°
-#define HALFPI 1.570796327	// 90°
-#define QUARTPI 0.7853981634// 45°
 
 long Vel[2];	// speed in m/s  << 15 (long) for PIDR and PIDL
 
@@ -301,8 +294,12 @@ fractional AngleKCoeffs[] = {0,0,0};
 #define MAX_ROT_SPEED 1200	// MAX speed (+ or -) of wheels during rotation
 #define RAD2DEG 57.295779513	// = 180/PI
 #define DEG2RAD 0.0174532925	// = PI/180
-float ThetaDes = 0;	// desired orientation angle (set point) [23] (Rad)
-float ThetaDesRef;	// to temporarely store angle (Rad)
+
+// #define PI 	  3.1415926536 180°
+#define TWOPI 6.2831853072	// 360°
+#define HALFPI 1.570796327	// 90°
+#define QUARTPI 0.7853981634// 45°
+
 #define ANGLE_OK_FLAG VARbits1.bit0	// target angle reached
 #define MIN_THETA_ERR DEG2RAD	// acceptable angle error in radians = 1°
 
@@ -344,9 +341,9 @@ int ErrCode;                       // Error Code
 
 #define CONSOLE_DEBUG VARbits1.bit1// [30]
 
-#define MASTER_FLAG VARbits1.bit3  // if master dsNav board execute navigation
-#define MAX_SPEED 1200             // rangecheck
-unsigned char ResetCount = 0;	   // [28]
+int MasterFlag;               // if master dsNav board execute navigation
+#define MAX_SPEED 1200        // rangecheck
+unsigned char ResetCount = 0; // [28]
 
 //I2C definitions
 unsigned char I2cRegPtr;//Pointer to first byte to read or write in the register
@@ -364,30 +361,30 @@ struct _TxBuff
 union __TxBuff
 {
     struct _TxBuff I;// to use as integers, little endian LSB first
-    char C[16];       // to use as bytes to send on I2C buffer
+    char C[I2C_BUFF_SIZE_TX]; // to use as bytes to send on I2C buffer
 }I2CTxBuff;
 
 
-#define I2C_BUFF_SIZE_RX 6
-unsigned char I2cRegRx[I2C_BUFF_SIZE_RX]={0,1,2,3,4,5};
+#define I2C_BUFF_SIZE_RX 8
 
 // RX Buffer
 struct _RxBuff
 {
-    int Uno;
-    int Due;
-    int Tre;
+    int VelDesM;    // mean measured speed mm/s [23]
+    int ThetaDes;   // desired orientation angle(set point)[23](Degx10 0-3599)
+    int ThetaMes;   // Current orientation angle (Deg x 10 0-3599)
+    char NewFlag;   // new values arrived
+    char MasterFlag;// to set the board as a master
 };
 
 union __RxBuff
 {
-    struct _RxBuff I;// to use as integers, little endian LSB first
-    char C[6];       // to use as bytes to send on I2C buffer
-}RxBuff;
+    struct _RxBuff I;// to use as integers or chars, little endian LSB first
+    char C[I2C_BUFF_SIZE_RX];  // to use as bytes to send on I2C buffer
+}I2CRxBuff;
 
 
-
-// VOLbits1.bit4 and up available
+// VOLbits1.bit3 and up available
 
 // VARbits1.bit4 and up available
 
