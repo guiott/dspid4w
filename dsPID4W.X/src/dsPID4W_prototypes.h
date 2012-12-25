@@ -1,6 +1,7 @@
 /* ///////////////////////////////////////////////////////////////////////// */
 /* Included	in "dsPid_definitions.h", it contains functions prototypes / */
 /* ///////////////////////////////////////////////////////////////////////// */
+void SpeedSlave(void);
 void SlowCycleOp(void);
 void WriteIntBuff(int TxBuffValue);
 int ReadIntBuff(void);

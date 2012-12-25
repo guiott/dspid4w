@@ -114,7 +114,7 @@ ResetCount = 0;
 
 ISR_Settings(); // Configures and enables ISRs
 
-// Send string 'Ver'
+/* Send string 'Ver'
 for (i = 0; i < 26; i++)
 {
     UartTxBuff[i] = Ver[i];
@@ -122,11 +122,12 @@ for (i = 0; i < 26; i++)
 DMA6CNT = 25; // # of DMA requests
 DMA6CONbits.CHEN = 1; // Re-enable DMA Channel
 DMA6REQbits.FORCE = 1; // Manual mode: Kick-start the first transfer
+*/
 
 I2CRxBuff.I.VelDesM = 0;
 
-// by default the board is configures as a slave, waitning for commands
-MasterFlag = 0;
+// by default the board is configures as a slave, waiting for commands
+I2CRxBuff.I.MasterFlag = 0;
 
 // end settings
 // </editor-fold>
@@ -149,7 +150,7 @@ if (Uart2RxPtrIn != Uart2RxPtrOut) Uart2Rx(); // [6zd]
 if ((UartRxStatus == 99) || (Uart2RxStatus == 99)) Parser();
 
 /* ------------------------------------------------------- DeadReckonig [22] */
-if (CYCLE1_FLAG && MasterFlag) DeadReckoning();
+if (CYCLE1_FLAG && I2CRxBuff.I.MasterFlag) DeadReckoning();
 
 /* ----------------------------------------------------------------- Cycle 2 */
 if (CYCLE2_FLAG) SlowCycleOp();
@@ -312,10 +313,34 @@ PID procedure to maintain the desired orientation.
 
     DeltaVel = (ANGLE_PID_OUT >> 7); // MAX delta in int = 256 [23d]
     RealVel = I2CRxBuff.I.VelDesM * VelDecr; // [24d]
+
     VelDes[R] = RealVel - DeltaVel; // [23e]
     VelDes[L] = RealVel + DeltaVel;
 
-    Speed(); // set the rotation speed for each wheel
+    SpeedSlave(); // Set the rotation speed for slave board
+    Speed();      // set the rotation speed for each wheel
+}
+
+void SpeedSlave(void)
+{/**
+*\brief Send the desired speed for each wheel to maintain the rear wheels at
+  * the same speed of the front ones
+*/
+    static int SpeedSlaveCount;
+
+    TmpBufIndx=0; // reset buffer index
+    WriteIntBuff(VelDes[R]);
+    WriteIntBuff(VelDes[L]);
+    if(SpeedSlaveCount<10) // every 10 cycles send a parameters request too
+    {
+        TxParameters('V', TmpBufIndx, 0);
+        SpeedSlaveCount++;
+    }
+    else
+    {
+        TxParameters('W', TmpBufIndx, 0);
+        SpeedSlaveCount=0;
+    }
 }
 
 void Speed(void)
@@ -346,7 +371,7 @@ void Speed(void)
       }
     */
 
-    if(MasterFlag) // if slave the ramp is controlled by master board
+    if(I2CRxBuff.I.MasterFlag) //if slave the ramp is controlled by master board
     {
         // <editor-fold defaultstate="collapsed" desc="Manage ramp">
         VelFin[R] = Q15((float) (VelDes[R]) / 2000); //normalized to 2m/s[23f]
@@ -662,7 +687,7 @@ void Parser(void)
             {
                 I2CRxBuff.I.ThetaMes = I2CRxBuff.I.ThetaDes;
             }
-            MasterFlag = 1; // master mode
+            I2CRxBuff.I.MasterFlag = 1; // master mode
             break;
 
         case 'G': // setting reference orientation angle in degrees
@@ -671,7 +696,7 @@ void Parser(void)
             // High Byte * 256 + Low Byte
             I2CRxBuff.I.ThetaDes = ReadIntBuff();
             VelDecr = 1; // [24d]
-            MasterFlag = 1; // master mode
+            I2CRxBuff.I.MasterFlag = 1; // master mode
             break;
 
         case 'S': // setting reference speed for the vehicle (as mm/s)
@@ -680,7 +705,7 @@ void Parser(void)
             // range check
             if (I2CRxBuff.I.VelDesM>MAX_SPEED) I2CRxBuff.I.VelDesM = MAX_SPEED;
             if (I2CRxBuff.I.VelDesM<-MAX_SPEED) I2CRxBuff.I.VelDesM= -MAX_SPEED;
-            MasterFlag = 1; // master mode
+            I2CRxBuff.I.MasterFlag = 1; // master mode
             break;
 
         case 'V': //Reference speed setting in mm/s for each wheel in slave mode
@@ -705,7 +730,7 @@ void Parser(void)
                 VelDes[L] = -MAX_SPEED; // range check
             }
 
-            MasterFlag = 0; // slave mode
+            I2CRxBuff.I.MasterFlag = 0; // slave mode
             Speed();
             break;
 
@@ -731,7 +756,7 @@ void Parser(void)
                 VelDes[L] = -MAX_SPEED; // range check
             }
 
-            MasterFlag = 0; // slave mode
+            I2CRxBuff.I.MasterFlag = 0; // slave mode
             Speed();
 
             TmpBufIndx=0; // reset buffer index
@@ -1330,6 +1355,7 @@ unsigned char I2cAddr; //to perform dummy reading of the SSPBUFF
 
  if (_SI2C1IF)   // I2C interrupt?
  {
+    ClrWdt();		// [1]
     SspstatMsk=I2C1STAT & STATE_MASK; //mask out unimportant bits
 
 //State 1------------------

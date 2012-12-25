@@ -131,6 +131,8 @@ dsPIC33FJ64MC804
 
 [1]
 Watchdog is disabled during development and debug.
+If no connunication occurs in approx. 1 sec from serial or I2C the WDT resets
+the micro. This is to avoid dangerous navigation without control.
 
 [1a]
 SW starts setting to OFF-state H-bridge's enable pin and turning ON the control

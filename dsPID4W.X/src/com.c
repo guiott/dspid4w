@@ -26,7 +26,7 @@ float BRG;
 /* 	Baud Rate = Fcy / ( 4 * (UxBRG + 1) ) with BRGH = 1
 	value for the U1BRG register rounded to closest integer (+0.5)
 */
-BaudRate = 57600; // desired baud rate 
+BaudRate = 640000; // desired baud rate
 BRG = (FCY/(4*(BaudRate)))-0.5; 
 
 /*...............................................................DMA UART TX */
@@ -63,12 +63,12 @@ U1STAbits.UTXISEL0 = 0;		// Interrupt after one Tx character is transmitted
 U1STAbits.UTXISEL1 = 0;			                            
 U1STAbits.URXISEL  = 0;		// Interrupt after one RX character is received
 
-//  Disable UART Rx and Tx if the same porte are used for I2C
-U1MODEbits.UARTEN = 0;// Disable UART
-U1STAbits.UTXEN 	= 0;// Disable UART Tx
+//  Enable UART1 Rx and Tx
+U1MODEbits.UARTEN = 1;// Enable UART
+U1STAbits.UTXEN 	= 1;// Enable UART Tx
 IEC4bits.U1EIE 		= 0;
 _U1RXIF				= 0;	// Reset RX interrupt flag
-_U1RXIE				= 0;	// Enable RX interrupt
+_U1RXIE				= 1;	// Enable RX interrupt
 
 UartRxStatus = 0;
 ChkSum=0;
@@ -89,7 +89,7 @@ float BRG2;
 /* 	Baud Rate = Fcy / ( 4 * (UxBRG + 1) ) with BRGH = 1
 	value for the U2BRG register rounded to closest integer (+0.5)
 */
-BaudRate2 = 640000; // desired baud rate
+BaudRate2 = 57600; // desired baud rate
 BRG2 = (FCY/(4*(BaudRate2)))-0.5; 
 
 /*..............................................................DMA UART2 TX */
@@ -110,7 +110,7 @@ DMA5STA = __builtin_dmaoffset(Uart2TxBuff);
 
 //	Enable DMA Interrupts
 IFS3bits.DMA5IF  = 0;	// Clear DMA Interrupt Flag
-IEC3bits.DMA5IE  = 1;	// Enable DMA interrupt
+IEC3bits.DMA5IE  = 0;	// Disable DMA interrupt because the port is used for I2C
 /*..............................................................DMA UART2 TX */
 
 /*....................................................................USART2 */
@@ -126,12 +126,12 @@ U2STAbits.UTXISEL0 = 0;		// Interrupt after one Tx character is transmitted
 U2STAbits.UTXISEL1 = 0;			                            
 U2STAbits.URXISEL  = 0;		// Interrupt after one RX character is received
 
-//  Enable UART2 Rx and Tx
-U2MODEbits.UARTEN = 1;	// Enable UART
-U2STAbits.UTXEN 	= 1;	// Enable UART Tx
+//  Disable UART Rx and Tx if the same porte are used for I2C
+U2MODEbits.UARTEN = 0;	// Disable UART
+U2STAbits.UTXEN 	= 0;	// Disable UART Tx
 IEC4bits.U2EIE 		= 0;
 _U2RXIF				= 0;	// Reset RX interrupt flag
-_U2RXIE				= 0;	// Enable RX interrupt
+_U2RXIE				= 0;	// Disable RX interrupt
 
 Uart2RxStatus = 0;
 ChkSum2=0;

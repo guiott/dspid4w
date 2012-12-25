@@ -40,8 +40,14 @@ _FPOR(FPWRT_PWR64 & PWMPIN_ON & HPOL_ON & LPOL_ON);
 ** Write Protect: Disabled **/ 
 _FGS(GSS_OFF & GCP_OFF & GWRP_OFF); 
 
-//   Watchdog Timer Enable:
-_FWDT(FWDTEN_OFF)	//Watchdog timer enabled/disabled by user software      
+/* Watchdog Timer Enable:
+ * Watchdog timer enabled/disabled by user software
+ * Prescler = 128
+ * Postscaler = 256
+ * WDT timer total about 1sec
+*/
+
+_FWDT(FWDTEN_OFF & WDTPOST_PS256 & WDTPRE_PR128);
   			 
 
 /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
@@ -341,7 +347,6 @@ int ErrCode;                       // Error Code
 
 #define CONSOLE_DEBUG VARbits1.bit1// [30]
 
-int MasterFlag;               // if master dsNav board execute navigation
 #define MAX_SPEED 1200        // rangecheck
 unsigned char ResetCount = 0; // [28]
 

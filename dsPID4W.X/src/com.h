@@ -86,13 +86,13 @@ unsigned char Uart2RxPtrEnd=0;	// message packet ending pointer in queue
 unsigned char Uart2RxPtrData=0;	// pointer to first data in queue
 unsigned char TmpPtr2;			// temporary pointer
 unsigned int Uart2TxCntr=0;
-#define UART2_CONT_TIMEOUT 100			// continuos parameters TX in ms(debug) 
+#define UART2_CONT_TIMEOUT 100		// continuos parameters TX in ms(debug) 
 int Uart2ContTxTimer=UART2_CONT_TIMEOUT;// timer for continuos parameters TX 
-volatile int Uart2RxStatus =0;			// index for command decoding status
+volatile int Uart2RxStatus =0;		// index for command decoding status
 #define OVERRUN_ERROR2 U2STAbits.OERR	// RX overrun error flag
 #define TX2_REG_EMPTY  U2STAbits.TRMT	// TX shift register empty
-#define FRAME_ERROR2 U2STAbits.FERR		// RX frame error flag
-#define RX2_ID_FLAG COMbits1.bit2		// command decode flag
-unsigned int Tx2ContFlag=0;				// continuos parameters TX flag (debug)
+#define FRAME_ERROR2 U2STAbits.FERR	// RX frame error flag
+#define RX2_ID_FLAG COMbits1.bit2	// command decode flag
+unsigned int Tx2ContFlag=0;		// continuos parameters TX flag (debug)
 //}
 
