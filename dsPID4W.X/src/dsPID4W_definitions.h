@@ -242,10 +242,11 @@ float SemiAxle; // Axle / 2
 int SpTick[2] = {0,0};	// distance traveled by a wheel as encoder pulses
 
 float Spmm[2] = {0,0};	// distance traveled by a wheel as mm(SpTick[x]*Ksp[x])
-float Space = 0;		// total distance traveled by the robot
-#define SPMIN 0.01		// Minimum value to perform odometry
-float CosPrev =	1;		// previous value for Cos(ThetaMes)
-float SinPrev =	0;		// previous value for Sin(ThetaMes)
+float Space = 0;	// total distance traveled by the robot
+#define SPMIN 0.01	// Minimum value to perform odometry
+
+float ThetaMes = 0;     // calculated orientation angle (Rad)
+float ThetaDes = 0;	// desired orientation angle (set point) (Rad)
 
 long Vel[2];	// speed in m/s  << 15 (long) for PIDR and PIDL
 
@@ -297,17 +298,19 @@ fractional AngleKCoeffs[] = {0,0,0};
 #define ANGLE_PID_DES AnglePIDstruct.controlReference	// desired angle
 #define ANGLE_PID_MES AnglePIDstruct.measuredOutput	// measured angle
 #define ANGLE_PID_OUT AnglePIDstruct.controlOutput	// PID output
-#define MAX_ROT_SPEED 1200	// MAX speed (+ or -) of wheels during rotation
-#define RAD2DEG 57.295779513	// = 180/PI
-#define DEG2RAD 0.0174532925	// = PI/180
+#define MAX_ROT_SPEED 1200	 // MAX speed (+ or -) of wheels during rotation
+#define RAD2DEG 57.29577951308	 // = 180/PI
+#define DEG2RAD 0.0174532925	 // = PI/180
+#define DEG2RAD10 0.00174532925  // = = PI/1800 for a 0-3599 range
+#define RAD2DEG10 572.9577951308 // = 1800/PI to a 0-3599 range
 
 // #define PI 	  3.1415926536 180°
 #define TWOPI 6.2831853072	// 360°
 #define HALFPI 1.570796327	// 90°
-#define QUARTPI 0.7853981634// 45°
+#define QUARTPI 0.7853981634    // 45°
 
 #define ANGLE_OK_FLAG VARbits1.bit0	// target angle reached
-#define MIN_THETA_ERR DEG2RAD	// acceptable angle error in radians = 1°
+#define MIN_THETA_ERR DEG2RAD       // acceptable angle error in radians = 1°
 
 float VelDecr;	// multiplied by VelDesM correct the speed [24d]
 
@@ -354,20 +357,27 @@ unsigned char ResetCount = 0; // [28]
 unsigned char I2cRegPtr;//Pointer to first byte to read or write in the register
 
 //TX registers array
-#define I2C_BUFF_SIZE_TX 16
+#define I2C_BUFF_SIZE_TX 26
 
 // I2C TX registers array
 struct _TxBuff
 {
-    int VelInt[4];   // speed in mm/s as an integer for all the wheels
-    int ADCValue[4]; // 64 sample average ADC also for slave
+    float PosXmes;  // current X position coordinate
+    float PosYmes;  // current Y position coordinate
+    int VelInt[4];      // speed in mm/s as an integer for all the wheels
+    int ADCValue[4];    // 64 sample average ADC also for slave
+    unsigned char stasis_err;   // number of times imu and wheels very different
+    unsigned char stasis_alarm; // signal too many stasis errors
 };
 
-union __TxBuff
+typedef union
 {
     struct _TxBuff I;// to use as integers, little endian LSB first
     char C[I2C_BUFF_SIZE_TX]; // to use as bytes to send on I2C buffer
-}I2CTxBuff;
+}__TxBuff; 
+
+__TxBuff I2CTxTmpBuff;
+__TxBuff I2CTxBuff;
 
 
 #define I2C_BUFF_SIZE_RX 8
@@ -375,18 +385,27 @@ union __TxBuff
 // RX Buffer
 struct _RxBuff
 {
-    int VelDesM;    // mean measured speed mm/s [23]
+    int VelDesM;    // mean desired speed mm/s [23]
     int ThetaDes;   // desired orientation angle(set point)[23](Degx10 0-3599)
-    int ThetaMes;   // Current orientation angle (Deg x 10 0-3599)
-    char NewFlag;   // new values arrived
+    int ImuTheta;   // Current orientation angle (Deg x 10 0-3599)
     char MasterFlag;// to set the board as a master
+    char NewFlag;   // new values arrived. Set at the end to close the cycle
 };
 
-union __RxBuff
+typedef union
 {
     struct _RxBuff I;// to use as integers or chars, little endian LSB first
     char C[I2C_BUFF_SIZE_RX];  // to use as bytes to send on I2C buffer
-}I2CRxBuff;
+}__RxBuff;
+
+__RxBuff I2CRxTmpBuff;
+__RxBuff I2CRxBuff;
+
+// stasis detector
+
+#define NOT_TURNING .005
+#define ARE_TURNING .010
+#define STASIS_ERR 60
 
 
 // VOLbits1.bit3 and up available

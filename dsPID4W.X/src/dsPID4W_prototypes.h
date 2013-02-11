@@ -1,6 +1,8 @@
 /* ///////////////////////////////////////////////////////////////////////// */
 /* Included	in "dsPid_definitions.h", it contains functions prototypes / */
 /* ///////////////////////////////////////////////////////////////////////// */
+float DeadReckCalc (char Mode, float SaMinusSb, float SrPlusSl, float ImuThetaMes);
+void Stasis(float wheel_drv, float imu_drv);
 void SpeedSlave(void);
 void SlowCycleOp(void);
 void WriteIntBuff(int TxBuffValue);

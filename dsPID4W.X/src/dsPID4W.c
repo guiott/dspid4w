@@ -206,20 +206,13 @@ available on Internet:
 *\ref _22 "details [22]"
 */
 
-    float CosNow; // current value for Cos
-    float SinNow; // current value for Sin
-    float DSpace; // delta traveled distance by the robot
-    float DTheta; // delta rotation angle
-    float DPosX; // delta space on X axis
-    float DPosY; // delta space on Y axis
+    float WheelDTheta;      // delta rotation angle measured by odometry
+    float ImuDTheta;        // delta rotation angle measured by IMU
     float SaMinusSb;
     float SrPlusSl;
-    float Radius;
-    int ThetaMes;
-    int ThetaDes;
-
-    ThetaDes = I2CRxBuff.I.ThetaDes * DEG2RAD;
-    ThetaMes = I2CRxBuff.I.ThetaMes * DEG2RAD;
+    float ImuThetaMes = 0;  // measured by IMU rad
+                        // global float ThetaMes, current correct measure (rad)
+    
     CYCLE1_FLAG = 0;
 
     Spmm[R] = SpTick[R] * Ksp[R]; // distance of right wheel in mm
@@ -227,60 +220,149 @@ available on Internet:
     Spmm[L] = SpTick[L] * Ksp[L]; // distance of left wheel in mm
     SpTick[L] = 0; // reset counter for the next misure
 
-#ifdef geographic			// [22aa]
-    SaMinusSb = Spmm[L] - Spmm[R];
-#else
-    SaMinusSb = Spmm[R] - Spmm[L];
-#endif
+    #ifdef geographic			// [22aa]
+        SaMinusSb = Spmm[L] - Spmm[R];
+    #else
+        SaMinusSb = Spmm[R] - Spmm[L];
+    #endif
 
     SrPlusSl = Spmm[R] + Spmm[L];
-    if (fabs(SaMinusSb) <= SPMIN)
-    {// traveling in a nearly straight line [22a]
-        DSpace = Spmm[R];
 
-#ifdef geographic			// [22aa]
-        DPosX = DSpace*SinPrev;
-        DPosY = DSpace*CosPrev;
-#else
-        DPosX = DSpace*CosPrev;
-        DPosY = DSpace*SinPrev;
-#endif
-
-    }
-    else if (fabs(SrPlusSl) <= SPMIN)
-    {// pivoting around vertical axis without translation [22a]
-        DTheta = SaMinusSb / Axle;
-        ThetaMes = fmodf((ThetaMes + DTheta), TWOPI);//current orient. 2PI range
-        CosPrev = cosf(ThetaMes); // for the next cycle
-        SinPrev = sinf(ThetaMes);
-        DPosX = 0;
-        DPosY = 0;
-        DSpace = 0;
+    if(!I2CRxBuff.I.NewFlag)
+    {/*if no data from IMU it computes orientation by odometry this also allows
+      * a different update rate in IMU and dsNav, currently 100Hz for dsNav,
+      * 40Hz for IMU
+     */
+        if (fabs(SaMinusSb) <= SPMIN)
+        {// traveling in a nearly straight line
+            WheelDTheta = DeadReckCalc(0, SaMinusSb, SrPlusSl, ImuThetaMes);
+        }
+        else if (fabs(SrPlusSl) <= SPMIN)
+        {// pivoting around vertical axis without translation [22a]
+            WheelDTheta = DeadReckCalc(1, SaMinusSb, SrPlusSl, ImuThetaMes);
+        }
+        else
+        {// rounding a curve
+            WheelDTheta = DeadReckCalc(2, SaMinusSb, SrPlusSl, ImuThetaMes);
+        }
     }
     else
-    {// rounding a curve
-        DTheta = SaMinusSb / Axle;
-        ThetaMes = fmodf((ThetaMes + DTheta), TWOPI);//current orient .2PI range
-        CosNow = cosf(ThetaMes);
-        SinNow = sinf(ThetaMes);
-        DSpace = SrPlusSl / 2;
-        Radius = (SemiAxle)*(SrPlusSl / SaMinusSb);
+    {//IMU data available, use yaw
+        I2CRxBuff.I.NewFlag = 0;            // data read, wait for next packet
+        ImuThetaMes = (float)I2CRxBuff.I.ImuTheta * DEG2RAD10;
 
-#ifdef geographic			// [22aa]
-        DPosX = Radius * (CosPrev - CosNow);
-        DPosY = Radius * (SinNow - SinPrev);
-#else
-        DPosX = Radius * (SinNow - SinPrev);
-        DPosY = Radius * (CosPrev - CosNow);
-#endif
+        // calculate rotation rate-of-change for stasis detector
+        ImuDTheta = ImuThetaMes - ThetaMes; // rotation rate from IMU
+        // compute also ThetaMes and position
+        WheelDTheta = DeadReckCalc(3, SaMinusSb, SrPlusSl, ImuThetaMes);
+ 
+        Stasis(fabs(WheelDTheta),fabs(ImuDTheta));
+    }
 
-        CosPrev = CosNow; // to avoid re-calculation on the next cycle
-        SinPrev = SinNow;
+    Orientation(); // position coordinates computed, Angle PID can start [23]
+}
+
+void Stasis(float wheel_drv, float imu_drv)
+{
+/*from David Paul Anderson jBot site:
+The variable stasis_err is incremented whenever stasis conditions are met and
+decremented to 0 when they are not met. This integration acts as a simple low
+pass filter that prevents the  escape() behavior from triggering too often, as
+when the robot is stuck only momentarily and then wiggles free, but also insures
+a trigger when the robot is bouncing around such that sometimes the wheel theta
+and IMU theta agree, but the robot actually is trapped. When the  stasis_err
+exceeds a global limit set by the user, the escape alarm is triggered. That
+limit is currently set such that the robot normally has about 2 seconds to free
+itself before the alarm is activated.
+*/
+
+        if ((imu_drv < NOT_TURNING) && (wheel_drv > ARE_TURNING))
+        {
+            I2CTxBuff.I.stasis_err++;
+        } else
+        {
+            if (I2CTxBuff.I.stasis_err) I2CTxBuff.I.stasis_err--;
+            else I2CTxBuff.I.stasis_alarm = 0;
+        }
+
+        if (I2CTxBuff.I.stasis_err > STASIS_ERR)
+        {
+            I2CTxBuff.I.stasis_alarm = 1;
+            I2CTxBuff.I.stasis_err = 0;
+        }
+
+}
+
+float DeadReckCalc (char Mode, float SaMinusSb, float SrPlusSl, float ImuThetaMes)
+{
+	static float CosPrev =	1;	// previous value for Cos(ThetaMes)
+	static float SinPrev =	0;	// previous value for Sin(ThetaMes)
+	float DSpace; 				// delta traveled distance by the robot
+	float CosNow; 				// current value for Cos
+  float SinNow; 				// current value for Sin
+  float DPosX; 				// delta space on X axis
+  float DPosY; 				// delta space on Y axis
+  float Radius;
+  float WheelDTheta;      // delta rotation angle measured by odometry
+
+  switch (Mode)
+	{
+		case 0: // traveling in a nearly straight line
+            WheelDTheta = 0;
+            DSpace = SrPlusSl / 2;
+
+            #ifdef geographic
+                DPosX = DSpace*SinPrev;
+                DPosY = DSpace*CosPrev;
+            #else
+                DPosX = DSpace*CosPrev;
+                DPosY = DSpace*SinPrev;
+            #endif
+            break;
+
+		case 1: // pivoting around vertical axis without translation
+            WheelDTheta = SaMinusSb / Axle;
+            DSpace = 0;
+            ThetaMes = fmodf((ThetaMes + WheelDTheta), TWOPI);//current orient. 2PI range
+            CosPrev = cosf(ThetaMes); // for the next cycle
+            SinPrev = sinf(ThetaMes);
+            DPosX = 0;
+            DPosY = 0;
+            break;
+
+        default:// rounding a curve
+            WheelDTheta = SaMinusSb / Axle;
+            DSpace = SrPlusSl / 2;
+            if(Mode == 3)
+            {// use IMU
+  	          ThetaMes = ImuThetaMes;
+  			}
+  			else
+  			{// use odometry
+  	          ThetaMes = fmodf((ThetaMes + WheelDTheta), TWOPI);//current orient .2PI range
+  			}
+            CosNow = cosf(ThetaMes);
+            SinNow = sinf(ThetaMes);
+            Radius = (SemiAxle)*(SrPlusSl / SaMinusSb);
+
+            #ifdef geographic
+                DPosX = Radius * (CosPrev - CosNow);
+                DPosY = Radius * (SinNow - SinPrev);
+            #else
+                DPosX = Radius * (SinNow - SinPrev);
+                DPosY = Radius * (CosPrev - CosNow);
+            #endif
+
+            CosPrev = CosNow; // to avoid re-calculation on the next cycle
+            SinPrev = SinNow;
+        	break;
     }
 
     Space += DSpace; // total traveled distance
+    I2CTxBuff.I.PosXmes += DPosX;       // current position
+    I2CTxBuff.I.PosYmes += DPosY;
 
-    Orientation(); // position coordinates computed, Angle PID can start [23]
+    return WheelDTheta;
 }
 
 void Orientation(void)
@@ -295,20 +377,22 @@ PID procedure to maintain the desired orientation.
     int RealVel;  // VelDesM after reduction controlled by Dist PID
     float Error;
 
-    if (I2CRxBuff.I.ThetaDes<0)I2CRxBuff.I.ThetaDes+=360;//keep angle value pos.
-    if (I2CRxBuff.I.ThetaMes<0)I2CRxBuff.I.ThetaMes+=360;
-    Error = I2CRxBuff.I.ThetaDes - I2CRxBuff.I.ThetaMes;
-    if (Error > 180) // search for the best direction to correct error [23a]
+    ThetaDes = I2CRxBuff.I.ThetaDes * DEG2RAD10;
+
+    if (ThetaDes < 0) ThetaDes += TWOPI;	// keep angle value positive
+    if (ThetaMes < 0) ThetaMes += TWOPI;
+    Error = ThetaMes - ThetaDes;
+    if (Error > PI)	// search for the best direction to correct error [23a]
     {
-        Error -= 360;
+      Error -= TWOPI;
     }
-    else if (Error < -180)
+    else if (Error < -PI)
     {
-        Error += 360;
+      Error += TWOPI;
     }
 
     ANGLE_PID_MES = 0; // des value translated to 0 [23c]
-    ANGLE_PID_DES = Q15(Error / 180); // current error [23b]
+    ANGLE_PID_DES = Q15(Error / PI); // current error [23b]
     PID(&AnglePIDstruct);
 
     DeltaVel = (ANGLE_PID_OUT >> 7); // MAX delta in int = 256 [23d]
@@ -681,11 +765,11 @@ void Parser(void)
         case 'F': // setting ref. orientation angle in degrees (absolute)
             // [24] Mode A
             // High Byte * 256 + Low Byte
-            I2CRxBuff.I.ThetaDes = ReadIntBuff();
+            I2CRxBuff.I.ThetaDes = ReadIntBuff(); // 0 - 3599
             VelDecr = 1; // [24d]
             if (CONSOLE_DEBUG) //[30]
             {
-                I2CRxBuff.I.ThetaMes = I2CRxBuff.I.ThetaDes;
+                ThetaMes = I2CRxBuff.I.ThetaDes;
             }
             I2CRxBuff.I.MasterFlag = 1; // master mode
             break;
@@ -694,7 +778,7 @@ void Parser(void)
             // as a delta of the current orientation (relative)
             // [24] Mode A
             // High Byte * 256 + Low Byte
-            I2CRxBuff.I.ThetaDes = ReadIntBuff();
+            I2CRxBuff.I.ThetaDes += ReadIntBuff();
             VelDecr = 1; // [24d]
             I2CRxBuff.I.MasterFlag = 1; // master mode
             break;
@@ -1377,13 +1461,18 @@ unsigned char I2cAddr; //to perform dummy reading of the SSPBUFF
         }
         else
         {//the received data is a valid byte to store
-            I2CRxBuff.C[I2cRegPtr] = I2C1RCV;
+            I2CRxTmpBuff.C[I2cRegPtr] = I2C1RCV;
+
             _SCLREL = 1; //release clock immediately to free up the bus
             I2cRegPtr ++;
         }
 
         if(I2cRegPtr >= I2C_BUFF_SIZE_RX)
         {
+            for(i = 0; i < I2C_BUFF_SIZE_RX; i++)
+            {
+                I2CRxBuff.C[i]=I2CRxTmpBuff.C[i];//double buffering to avoid inconsistency
+            }
             I2cRegPtr = I2C_BUFF_SIZE_RX - 1;
         }
         I2C_POINTER_FLAG = 0;
@@ -1392,12 +1481,17 @@ unsigned char I2cAddr; //to perform dummy reading of the SSPBUFF
 //State 3------------------
     else if((SspstatMsk & BF_MASK) == STATE3)
     {//first reading from master after it sends address
+        for(i = 0; i < I2C_BUFF_SIZE_TX; i++)
+        {
+            I2CTxTmpBuff.C[i]=I2CTxBuff.C[i];//double buffering to avoid inconsistency
+        }
+
         I2cAddr = I2C1RCV;  //dummy reading of the buffer to empty it
         for(i=0; i<MAX_TRY; i++)
         {//check MAX_TRY times if buffer is empty
             if(!_TBF)
             {//if buffer is empty send a byte
-                I2C1TRN = I2CTxBuff.C[I2cRegPtr]; //send requested byte
+                I2C1TRN = I2CTxTmpBuff.C[I2cRegPtr]; //send requested byte
                 _SCLREL = 1; //free up the bus
                 I2cRegPtr ++;
                 if(I2cRegPtr >= I2C_BUFF_SIZE_TX)
@@ -1424,7 +1518,7 @@ unsigned char I2cAddr; //to perform dummy reading of the SSPBUFF
         {//check MAX_TRY times if buffer is empty
             if(!_TBF)
             {//if buffer is empty send a byte
-                I2C1TRN = I2CTxBuff.C[I2cRegPtr]; //send requested byte
+                I2C1TRN = I2CTxTmpBuff.C[I2cRegPtr]; //send requested byte
                 _SCLREL = 1; //free up the bus
                 I2cRegPtr ++;
                 if(I2cRegPtr >= I2C_BUFF_SIZE_TX)
