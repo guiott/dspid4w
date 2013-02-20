@@ -79,4 +79,4 @@ Fcy = Fosc / 2 = 39.6288
 #define RX_HEADER_LEN 3		// command string header length (byte)
 
 #define I2C_POINTER_FLAG VARbits1.bit3
-#define I2C_ADDR 0X24
+#define I2C_ADDR 0X3F
