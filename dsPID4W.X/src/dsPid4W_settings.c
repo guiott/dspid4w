@@ -757,7 +757,7 @@ IC2CONbits.ICM = 1;		//	Capture mode every  edge
 /* I2C                                                                       */
 /*---------------------------------------------------------------------------*/
 
-I2C1ADD = I2C_ADDR;   
+I2C1ADD = I2C_ADDR >> 1;
 _I2CEN = 1;           //Enable I2C on I/O pins
 _A10M  = 0;           //7-bit addressing
 _STREN = 1;           //Clock stretching enabled

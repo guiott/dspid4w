@@ -63,6 +63,8 @@ There are no "wait until" and no delays in the code. Whenever possible
  */
 
  // <editor-fold defaultstate="collapsed" desc="Settings">
+
+ I2CRxBuff.I.VelDesM = 0x7FFF; //it means both wheels stop whatever orientation is
  Settings();
 
 //[1]
@@ -124,8 +126,6 @@ DMA6CONbits.CHEN = 1; // Re-enable DMA Channel
 DMA6REQbits.FORCE = 1; // Manual mode: Kick-start the first transfer
 */
 
-I2CRxBuff.I.VelDesM = 0;
-
 // by default the board is configures as a slave, waiting for commands
 I2CRxBuff.I.MasterFlag = 0;
 
@@ -139,6 +139,10 @@ I2CRxBuff.I.MasterFlag = 0;
 while (1) // start of idle cycle [25a]
 {
 // TEST ^= 1; // used for debug, toggle pin 16 alternatively with I2C
+
+
+  //      ClrWdt();		// [1] ============debug
+
 
 /* ----------------------------------------- one character coming from UART1 */
 if (UartRxPtrIn != UartRxPtrOut) UartRx(); // [6d]
@@ -249,7 +253,7 @@ available on Internet:
     else
     {//IMU data available, use yaw
         I2CRxBuff.I.NewFlag = 0;            // data read, wait for next packet
-        ImuThetaMes = (float)I2CRxBuff.I.ImuTheta * DEG2RAD10;
+        ImuThetaMes = (float)I2CRxBuff.I.ImuThetaAbs * DEG2RAD10; // excluded YawOffset for possible error
 
         // calculate rotation rate-of-change for stasis detector
         ImuDTheta = ImuThetaMes - ThetaMes; // rotation rate from IMU
@@ -259,7 +263,14 @@ available on Internet:
         Stasis(fabs(WheelDTheta),fabs(ImuDTheta));
     }
 
-    Orientation(); // position coordinates computed, Angle PID can start [23]
+    if(I2CRxBuff.I.OrientFlag)
+    {
+        Orientation(); // position coordinates computed, Angle PID can start [23]
+    }
+    else
+    {
+        DirectDrive(); // to directly control the direction via remote joystick
+    }
 }
 
 void Stasis(float wheel_drv, float imu_drv)
@@ -395,14 +406,48 @@ PID procedure to maintain the desired orientation.
     ANGLE_PID_DES = Q15(Error / PI); // current error [23b]
     PID(&AnglePIDstruct);
 
-    DeltaVel = (ANGLE_PID_OUT >> 7); // MAX delta in int = 256 [23d]
-    RealVel = I2CRxBuff.I.VelDesM * VelDecr; // [24d]
+    if(I2CRxBuff.I.VelDesM != 0x7FFF)
+    {// OXFFFF means both wheels stop whatever orentation is set
+        DeltaVel = (ANGLE_PID_OUT >> 7); // MAX delta in int = 256 [23d]
+        RealVel = I2CRxBuff.I.VelDesM * VelDecr; // [24d]
 
-    VelDes[R] = RealVel - DeltaVel; // [23e]
-    VelDes[L] = RealVel + DeltaVel;
+        VelDes[R] = RealVel - DeltaVel; // [23e]
+        VelDes[L] = RealVel + DeltaVel;
+    }
+    else
+    {
+        VelDes[R] = 0;
+        VelDes[L] = 0;
+    }
 
-    SpeedSlave(); // Set the rotation speed for slave board
     Speed();      // set the rotation speed for each wheel
+    SpeedSlave(); // Set the rotation speed for slave board
+}
+
+void DirectDrive(void)
+{/**
+*\brief Direct driving by joystick.
+*/
+
+    int DeltaVel; // difference in speed between the wheels to rotate
+    int RealVel;  // VelDesM after reduction controlled by Dist PID
+
+    if(I2CRxBuff.I.VelDesM != 0x7FFF)
+    {// OXFFFF means both wheels stop whatever orentation is set
+        DeltaVel = I2CRxBuff.I.ThetaDes;
+        RealVel = I2CRxBuff.I.VelDesM * VelDecr; // [24d]
+
+        VelDes[R] = RealVel - DeltaVel; // [23e]
+        VelDes[L] = RealVel + DeltaVel;
+    }
+    else
+    {
+        VelDes[R] = 0;
+        VelDes[L] = 0;
+    }
+
+    Speed();      // set the rotation speed for each wheel
+    SpeedSlave(); // Set the rotation speed for slave board
 }
 
 void SpeedSlave(void)
@@ -413,8 +458,8 @@ void SpeedSlave(void)
     static int SpeedSlaveCount;
 
     TmpBufIndx=0; // reset buffer index
-    WriteIntBuff(VelDes[R]);
-    WriteIntBuff(VelDes[L]);
+    WriteIntBuff(PidRef[R]);
+    WriteIntBuff(PidRef[L]);
     if(SpeedSlaveCount<10) // every 10 cycles send a parameters request too
     {
         TxParameters('V', TmpBufIndx, 0);
@@ -536,12 +581,7 @@ void Speed(void)
     // end Manage ramp
     // </editor-fold>
     }
-    else
-    {
-        PidRef[R] = Q15((float) (VelDes[R]) / 2000); //normalized to 2m/s[23f]
-        PidRef[L] = Q15((float) (VelDes[L]) / 2000); //normalized to 2m/s[23f]
-    }
-
+    
     SelectIcPrescaler();
 }
 
@@ -794,25 +834,8 @@ void Parser(void)
 
         case 'V': //Reference speed setting in mm/s for each wheel in slave mode
             // High Byte * 256 + Low Byte
-            VelDes[R] = ReadIntBuff();
-            VelDes[L] = ReadIntBuff();
-            if (VelDes[R] > MAX_SPEED)
-            {
-                 VelDes[R] = MAX_SPEED;   // range check
-            }
-            else if (VelDes[R] < -MAX_SPEED)
-            {
-                VelDes[R] = -MAX_SPEED; // range check
-            }
-
-            if (VelDes[L] > MAX_SPEED)
-            {
-                 VelDes[L] = MAX_SPEED;   // range check
-            }
-            else if (VelDes[L] < -MAX_SPEED)
-            {
-                VelDes[L] = -MAX_SPEED; // range check
-            }
+            PidRef[R] = ReadIntBuff();
+            PidRef[L] = ReadIntBuff();
 
             I2CRxBuff.I.MasterFlag = 0; // slave mode
             Speed();
@@ -820,25 +843,8 @@ void Parser(void)
 
         case 'W': //Ref. wheel speed set in slave mode with parameter request
             // High Byte * 256 + Low Byte
-            VelDes[R] = ReadIntBuff();
-            VelDes[L] = ReadIntBuff();
-            if (VelDes[R] > MAX_SPEED)
-            {
-                 VelDes[R] = MAX_SPEED;   // range check
-            }
-            else if (VelDes[R] < -MAX_SPEED)
-            {
-                VelDes[R] = -MAX_SPEED; // range check
-            }
-
-            if (VelDes[L] > MAX_SPEED)
-            {
-                 VelDes[L] = MAX_SPEED;   // range check
-            }
-            else if (VelDes[L] < -MAX_SPEED)
-            {
-                VelDes[L] = -MAX_SPEED; // range check
-            }
+            PidRef[R] = ReadIntBuff();
+            PidRef[L] = ReadIntBuff();
 
             I2CRxBuff.I.MasterFlag = 0; // slave mode
             Speed();
@@ -856,7 +862,7 @@ void Parser(void)
 
          case 'H': // immediate Halt without decelerating ramp.In this way it
             // uses the brake effect of H bridge in LAP mode
-            I2CRxBuff.I.VelDesM = 0;
+            I2CRxBuff.I.VelDesM = 0X7FFF;
             if (CONSOLE_DEBUG) //[30]
             {
                 VelMes[R] = 0;
@@ -962,7 +968,7 @@ void AdcCalc(void)
     {
         ADCOvldCount[R] = 0;
         ADCOvldCount[R] = 0;
-        I2CRxBuff.I.VelDesM = 0; // immediate halt
+        I2CRxBuff.I.VelDesM = 0x7FFF; // immediate halt
         BlinkOn = 50; // very fast blink for alarm
         BlinkPeriod = 100;
         ErrCode = -30;
@@ -1015,7 +1021,8 @@ Kvel[L] = KvelMode[0][L];
 
 Ksp[R] = 0.005065008;
 Ksp[L] = 0.0050520;
-Axle = 184.8728;
+// Axle = 184.8728; // mm Rino Robot
+Axle = 510.0;   // mm Lino Robot
 
 SemiAxle = Axle / 2;
 }

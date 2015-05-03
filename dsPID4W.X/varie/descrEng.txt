@@ -834,7 +834,7 @@ DMA
 
 *******************************************************************************
 [21]
-To allow SIM debugging. Otherwise MPLAB stay hanged forever
+To allow SIM debugging. Otherwise MPLAB stay hung forever
 
 *******************************************************************************
 [22]

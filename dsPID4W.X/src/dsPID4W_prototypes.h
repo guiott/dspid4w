@@ -17,6 +17,7 @@ void DelayN1ms(int n);
 void DelayN10us(int n);
 void InitAnglePid(void);
 void Orientation(void);
+void DirectDrive(void);
 void DeadReckoning(void);
 unsigned char IncrCircPtr(int Port);
 void InitPidR(void);

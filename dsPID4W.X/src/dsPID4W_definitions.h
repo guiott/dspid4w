@@ -380,16 +380,18 @@ __TxBuff I2CTxTmpBuff;
 __TxBuff I2CTxBuff;
 
 
-#define I2C_BUFF_SIZE_RX 8
+#define I2C_BUFF_SIZE_RX 11
 
 // RX Buffer
 struct _RxBuff
 {
     int VelDesM;    // mean desired speed mm/s [23]
     int ThetaDes;   // desired orientation angle(set point)[23](Degx10 0-3599)
-    int ImuTheta;   // Current orientation angle (Deg x 10 0-3599)
+    int ImuThetaAbs;// absolute value for current orientation angle (Deg x 10 0-3599)
+    int ImuTheta;   // current orientation angle (Deg x 10 0-3599) relative to strtup position
     char MasterFlag;// to set the board as a master
     char NewFlag;   // new values arrived. Set at the end to close the cycle
+    char OrientFlag;// change the orientation mode (direct or PID) according to external command
 };
 
 typedef union
